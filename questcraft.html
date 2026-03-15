@@ -1275,6 +1275,13 @@ function mkNode(type, x, y) {
   return base;
 }
 
+// ─── NODE LABEL HELPER ───────────────────────────────────────────────────────
+const NODE_PREFIX = { dialog:'D', choice:'C', condition:'K', action:'A', jump:'J', end:'E', gate:'G' };
+function nodeLabel(node) {
+  if (!node) return '?';
+  return (NODE_PREFIX[node.type] || 'N') + node.id.replace(/\D/g,'');
+}
+
 // ─── RENDER ──────────────────────────────────────────────────────────────────
 function renderAll() { renderNodes(); renderArrows(); }
 
@@ -1311,6 +1318,7 @@ function buildNodeEl(node) {
       <div class="node-type-icon" style="background:${c.border}">${c.icon}</div>
       <span class="node-type-label" style="color:${c.accent}">${c.label}</span>
       ${npc ? `<span class="node-npc-tag" style="background:${npc.color};color:${npc.text}">${npc.name}</span>` : ''}
+      <span style="margin-left:auto;font-size:10px;font-weight:800;color:${c.accent};opacity:.6;font-family:monospace;letter-spacing:.02em;padding-right:2px">${nodeLabel(node)}</span>
     </div>`;
 
   // Body
@@ -1356,7 +1364,23 @@ function buildNodeEl(node) {
     </div>`;
   } else if (node.type==='jump') {
     const tgt = S.nodes.find(n=>n.id===node.target);
-    bodyHTML = `<div class="node-jump-target">→ ${tgt?`Node #${tgt.id}`:'(selecteer doel)'}</div>`;
+    const tgtC = tgt ? (NODE_COLORS[tgt.type] || NODE_COLORS.dialog) : null;
+    bodyHTML = tgt
+      ? '<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:var(--bg);border-radius:6px;border:1px solid var(--teal-dim)">'
+        + '<span style="font-size:14px">↗</span>'
+        + '<div style="flex:1;min-width:0">'
+        + '<div style="font-size:9px;color:var(--teal);font-weight:700;text-transform:uppercase;letter-spacing:.05em">Sprong naar</div>'
+        + '<div style="font-size:12px;color:var(--text);display:flex;align-items:center;gap:4px">'
+        + '<span>' + tgtC.icon + '</span>'
+        + '<span style="font-weight:800;font-family:monospace;color:' + tgtC.accent + '">' + nodeLabel(tgt) + '</span>'
+        + '<span style="color:var(--text3);font-size:10px">— ' + tgtC.label + '</span>'
+        + '</div>'
+        + (tgt.text && tgt.text[Object.keys(tgt.text||{})[0]] ? '<div style="font-size:10px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px">"' + (tgt.text[Object.keys(tgt.text)[0]]||'').slice(0,40) + '"</div>' : '')
+        + '</div></div>'
+      : '<div style="display:flex;align-items:center;gap:6px;color:var(--amber);font-size:11px;padding:4px 6px">'
+        + '<span>↗</span><span style="font-style:italic">Selecteer doel in het paneel</span>'
+        + '</div>';
+  }
   if (node.type==='gate') {
     const trueConn  = S.conns.find(c=>c.from===node.id&&c.fp==='out-true');
     const falseConn = S.conns.find(c=>c.from===node.id&&c.fp==='out-false');
@@ -1408,7 +1432,7 @@ function buildNodeEl(node) {
            + '<div style="font-size:9px;color:var(--text3)">' + port + '</div></div>';
     };
 
-    contentHTML += '<div class="rp-section">'
+    bodyHTML = '<div class="rp-section">'
       + '<div class="rp-label">Gate type</div>'
       + '<div style="display:flex;gap:0;border:1px solid var(--border);border-radius:7px;overflow:hidden;margin-bottom:10px">' + gateBtns + '</div>'
       + inputsSection + '</div>'
@@ -1419,20 +1443,17 @@ function buildNodeEl(node) {
       + mkOut(trueNode,  '#4ade80', '#14532d', '\u2713 Waar (true)',   'linker poort')
       + mkOut(falseNode, '#f87171', '#450a0a', '\u2717 Onwaar (false)', 'rechter poort')
       + '</div></div>';
-  }
-    bodyHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-        <div style="display:flex;flex-direction:column;gap:3px">
-          ${Array.from({length:inputs},(_,i)=>`<div style="font-size:9px;color:var(--text3)">In ${i+1}</div>`).join('')}
-        </div>
-        <div style="flex:1;text-align:center">
-          <div style="display:inline-block;padding:4px 14px;border-radius:6px;background:var(--bg);border:1.5px solid #2d2d5a;font-size:13px;font-weight:800;color:#818cf8;font-family:monospace;letter-spacing:.05em">${node.gateType||'AND'}</div>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
-          <div style="font-size:9px;font-weight:700;color:#4ade80">✓ waar</div>
-          <div style="font-size:9px;font-weight:700;color:#f87171">✗ onwaar</div>
-        </div>
-      </div>`;
+
+    const inputs2 = node.gateType === 'NOT' ? 1 : (node.inputs || 2);
+    bodyHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
+      + '<div style="display:flex;flex-direction:column;gap:3px">'
+      + Array.from({length:inputs2},function(_,i){ return '<div style="font-size:9px;color:var(--text3)">In '+(i+1)+'</div>'; }).join('')
+      + '</div>'
+      + '<div style="flex:1;text-align:center"><div style="display:inline-block;padding:4px 14px;border-radius:6px;background:var(--bg);border:1.5px solid #2d2d5a;font-size:13px;font-weight:800;color:#818cf8;font-family:monospace">'+(node.gateType||'AND')+'</div></div>'
+      + '<div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">'
+      + '<div style="font-size:9px;font-weight:700;color:#4ade80">\u2713 waar</div>'
+      + '<div style="font-size:9px;font-weight:700;color:#f87171">\u2717 onwaar</div>'
+      + '</div></div>';
   }
 
   // Ports
@@ -1976,7 +1997,10 @@ function buildPanel() {
        + '<select class="rp-select" onchange="setField(\''+node.id+'\',\'target\',this.value)">'
        + '<option value="">'+t('rp_target_placeholder')+'</option>'
        + S.nodes.filter(function(n){return n.id!==node.id;}).map(function(n){
-           return '<option value="'+n.id+'"'+(n.id===node.target?' selected':'')+'>'+(NODE_COLORS[n.type]?NODE_COLORS[n.type].icon:'')+' '+n.id+' \u2014 '+n.type+'</option>';
+           return '<option value="'+n.id+'"'+(n.id===node.target?' selected':'')+'>'
+             + nodeLabel(n) + ' — ' + (NODE_COLORS[n.type]?NODE_COLORS[n.type].icon:'') + ' '
+             + ((n.text && n.text[S.panelLang] && n.text[S.panelLang].slice(0,30)) || n.type)
+             + '</option>';
          }).join('')
        + '</select></div>';
   }
@@ -3570,7 +3594,7 @@ const UI_LANGS = {
     nt_action: 'Actie', nt_jump: 'Sprong', nt_end: 'Einde',
     nd_dialog: 'NPC zegt iets', nd_choice: 'Speler kiest een optie',
     nd_condition: 'If / else logica', nd_action: 'Geef item / speel geluid',
-    nd_jump: 'Ga naar andere node', nd_end: 'Gesprek eindigt', nt_gate: 'Gate', nd_gate: 'AND / OR logica',
+    nd_jump: 'Ga naar andere node', nd_end: 'Gesprek eindigt', nt_gate: 'Gate', nd_gate: 'AND / OR logica', tt_gate: '⊕ Gate\nCombineer condities met AND, OR of NOT.\nMeerdere ingangspoorten, twee uitgangen.',
     // Rechter paneel
     rp_title: 'Eigenschappen', rp_empty: 'Klik op een node\nom te bewerken',
     rp_edit_lang: 'Taal bewerken', rp_text: 'Tekst', rp_npc: 'NPC',
@@ -3639,7 +3663,7 @@ const UI_LANGS = {
     nt_action: 'Action', nt_jump: 'Jump', nt_end: 'End',
     nd_dialog: 'NPC says something', nd_choice: 'Player picks an option',
     nd_condition: 'If / else logic', nd_action: 'Give item / play sound',
-    nd_jump: 'Go to another node', nd_end: 'Conversation ends', nt_gate: 'Gate', nd_gate: 'AND / OR logic',
+    nd_jump: 'Go to another node', nd_end: 'Conversation ends', nt_gate: 'Gate', nd_gate: 'AND / OR logic', tt_gate: '⊕ Gate\nCombine conditions with AND, OR or NOT.\nMultiple input ports, two outputs.',
     rp_title: 'Properties', rp_empty: 'Click a node\nto edit it',
     rp_edit_lang: 'Edit language', rp_text: 'Text', rp_npc: 'NPC',
     rp_question: 'Question for player', rp_choices: 'Choice options',
@@ -3701,7 +3725,7 @@ const UI_LANGS = {
     nt_action: 'Aktion', nt_jump: 'Sprung', nt_end: 'Ende',
     nd_dialog: 'NPC sagt etwas', nd_choice: 'Spieler wählt eine Option',
     nd_condition: 'If / else Logik', nd_action: 'Item geben / Ton abspielen',
-    nd_jump: 'Zu anderem Node gehen', nd_end: 'Gespräch endet', nt_gate: 'Gate', nd_gate: 'AND / OR Logik',
+    nd_jump: 'Zu anderem Node gehen', nd_end: 'Gespräch endet', nt_gate: 'Gate', nd_gate: 'AND / OR Logik', tt_gate: '⊕ Gate\nBedingungen mit AND, OR oder NOT kombinieren.\nMehrere Eingänge, zwei Ausgänge.',
     rp_title: 'Eigenschaften', rp_empty: 'Node anklicken\num zu bearbeiten',
     rp_edit_lang: 'Sprache bearbeiten', rp_text: 'Text', rp_npc: 'NPC',
     rp_question: 'Frage an Spieler', rp_choices: 'Auswahloptionen',
@@ -3763,7 +3787,7 @@ const UI_LANGS = {
     nt_action: 'Action', nt_jump: 'Saut', nt_end: 'Fin',
     nd_dialog: 'Le PNJ dit quelque chose', nd_choice: 'Le joueur choisit',
     nd_condition: 'Logique if / else', nd_action: 'Donner objet / jouer son',
-    nd_jump: 'Aller à un autre nœud', nd_end: 'Fin de conversation', nt_gate: 'Gate', nd_gate: 'Logique AND / OR',
+    nd_jump: 'Aller à un autre nœud', nd_end: 'Fin de conversation', nt_gate: 'Gate', nd_gate: 'Logique AND / OR', tt_gate: '⊕ Gate\nCombiner des conditions avec AND, OR ou NOT.\nPlusieurs entrées, deux sorties.',
     rp_title: 'Propriétés', rp_empty: 'Cliquez sur un nœud\npour le modifier',
     rp_edit_lang: 'Modifier la langue', rp_text: 'Texte', rp_npc: 'PNJ',
     rp_question: 'Question au joueur', rp_choices: 'Options de choix',
@@ -3819,7 +3843,7 @@ const UI_LANGS = {
     sb_add_npc: '+ Lägg till NPC', lang_placeholder: 't.ex. DE, FR…', lang_add: '+ Lägg till',
     nt_dialog: 'Dialog', nt_choice: 'Val', nt_condition: 'Villkor', nt_action: 'Åtgärd', nt_jump: 'Hopp', nt_end: 'Slut',
     nd_dialog: 'NPC säger något', nd_choice: 'Spelaren väljer', nd_condition: 'If / else logik',
-    nd_action: 'Ge föremål / spela ljud', nd_jump: 'Gå till annan nod', nd_end: 'Konversation slutar', nt_gate: 'Gate', nd_gate: 'AND / OR-logik',
+    nd_action: 'Ge föremål / spela ljud', nd_jump: 'Gå till annan nod', nd_end: 'Konversation slutar', nt_gate: 'Gate', nd_gate: 'AND / OR-logik', tt_gate: '⊕ Gate\nKombinera villkor med AND, OR eller NOT.',
     rp_title: 'Egenskaper', rp_empty: 'Klicka på en nod\nför att redigera',
     rp_edit_lang: 'Redigera språk', rp_text: 'Text', rp_npc: 'NPC',
     rp_question: 'Fråga till spelaren', rp_choices: 'Svarsalternativ',
@@ -3863,7 +3887,7 @@ const UI_LANGS = {
     sb_add_npc: '+ Legg til NPC', lang_placeholder: 'f.eks. DE, FR…', lang_add: '+ Legg til',
     nt_dialog: 'Dialog', nt_choice: 'Valg', nt_condition: 'Betingelse', nt_action: 'Handling', nt_jump: 'Hopp', nt_end: 'Slutt',
     nd_dialog: 'NPC sier noe', nd_choice: 'Spilleren velger', nd_condition: 'If / else logikk',
-    nd_action: 'Gi gjenstand / spill lyd', nd_jump: 'Gå til annen node', nd_end: 'Samtale avsluttes', nt_gate: 'Gate', nd_gate: 'AND / OR-logikk',
+    nd_action: 'Gi gjenstand / spill lyd', nd_jump: 'Gå til annen node', nd_end: 'Samtale avsluttes', nt_gate: 'Gate', nd_gate: 'AND / OR-logikk', tt_gate: '⊕ Gate\nKombiner betingelser med AND, OR eller NOT.',
     rp_title: 'Egenskaper', rp_empty: 'Klikk på en node\nfor å redigere',
     rp_edit_lang: 'Rediger språk', rp_text: 'Tekst', rp_npc: 'NPC',
     rp_question: 'Spørsmål til spilleren', rp_choices: 'Svaralternativer',
@@ -3907,7 +3931,7 @@ const UI_LANGS = {
     sb_add_npc: '+ Tilføj NPC', lang_placeholder: 'f.eks. DE, FR…', lang_add: '+ Tilføj',
     nt_dialog: 'Dialog', nt_choice: 'Valg', nt_condition: 'Betingelse', nt_action: 'Handling', nt_jump: 'Spring', nt_end: 'Slut',
     nd_dialog: 'NPC siger noget', nd_choice: 'Spilleren vælger', nd_condition: 'If / else logik',
-    nd_action: 'Giv genstand / spil lyd', nd_jump: 'Gå til anden node', nd_end: 'Samtale afsluttes', nt_gate: 'Gate', nd_gate: 'AND / OR-logik',
+    nd_action: 'Giv genstand / spil lyd', nd_jump: 'Gå til anden node', nd_end: 'Samtale afsluttes', nt_gate: 'Gate', nd_gate: 'AND / OR-logik', tt_gate: '⊕ Gate\nKombinera villkor med AND, OR eller NOT.',
     rp_title: 'Egenskaber', rp_empty: 'Klik på en node\nfor at redigere',
     rp_edit_lang: 'Rediger sprog', rp_text: 'Tekst', rp_npc: 'NPC',
     rp_question: 'Spørgsmål til spilleren', rp_choices: 'Svarmuligheder',
@@ -3951,7 +3975,7 @@ const UI_LANGS = {
     sb_add_npc: '+ Lisää NPC', lang_placeholder: 'esim. DE, FR…', lang_add: '+ Lisää',
     nt_dialog: 'Dialogi', nt_choice: 'Valinta', nt_condition: 'Ehto', nt_action: 'Toiminto', nt_jump: 'Hyppy', nt_end: 'Loppu',
     nd_dialog: 'NPC sanoo jotain', nd_choice: 'Pelaaja valitsee', nd_condition: 'If / else logiikka',
-    nd_action: 'Anna esine / toista ääni', nd_jump: 'Siirry toiseen solmuun', nd_end: 'Keskustelu päättyy', nt_gate: 'Gate', nd_gate: 'AND / OR-logiikka',
+    nd_action: 'Anna esine / toista ääni', nd_jump: 'Siirry toiseen solmuun', nd_end: 'Keskustelu päättyy', nt_gate: 'Gate', nd_gate: 'AND / OR-logiikka', tt_gate: '⊕ Gate\nYhdistä ehdot AND-, OR- tai NOT-logiikalla.',
     rp_title: 'Ominaisuudet', rp_empty: 'Napsauta solmua\nmuokataksesi',
     rp_edit_lang: 'Muokkaa kieltä', rp_text: 'Teksti', rp_npc: 'NPC',
     rp_question: 'Kysymys pelaajalle', rp_choices: 'Vastausvaihtoehdot',
@@ -3995,7 +4019,7 @@ const UI_LANGS = {
     sb_add_npc: '+ Bæta við NPC', lang_placeholder: 't.d. DE, FR…', lang_add: '+ Bæta við',
     nt_dialog: 'Samtal', nt_choice: 'Val', nt_condition: 'Skilyrði', nt_action: 'Aðgerð', nt_jump: 'Stökk', nt_end: 'Lok',
     nd_dialog: 'NPC segir eitthvað', nd_choice: 'Leikmaður velur', nd_condition: 'If / else rök',
-    nd_action: 'Gefðu hlut / spilaðu hljóð', nd_jump: 'Fara í aðra hnút', nd_end: 'Samtal lýkur', nt_gate: 'Gate', nd_gate: 'AND / OR rök',
+    nd_action: 'Gefðu hlut / spilaðu hljóð', nd_jump: 'Fara í aðra hnút', nd_end: 'Samtal lýkur', nt_gate: 'Gate', nd_gate: 'AND / OR rök', tt_gate: '⊕ Gate\nSameinaðu skilyrði með AND, OR eða NOT.',
     rp_title: 'Eiginleikar', rp_empty: 'Smelltu á hnút\ntil að breyta',
     rp_edit_lang: 'Breyta tungumáli', rp_text: 'Texti', rp_npc: 'NPC',
     rp_question: 'Spurning til leikmanns', rp_choices: 'Svarmöguleikar',
@@ -4071,7 +4095,7 @@ function applyUILang() {
   const toolNames = document.querySelectorAll('.tool-name');
   const toolDescs = document.querySelectorAll('.tool-desc');
   const tools     = document.querySelectorAll('.tool');
-  const types = ['dialog','choice','condition','action','jump','end'];
+  const types = ['dialog','choice','condition','gate','action','jump','end'];
   types.forEach((tp, i) => {
     if (toolNames[i]) toolNames[i].textContent = t('nt_'+tp);
     if (toolDescs[i]) toolDescs[i].textContent = t('nd_'+tp);
