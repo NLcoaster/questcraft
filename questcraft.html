@@ -295,6 +295,7 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); co
   <button class="hud-btn" id="btn-save" onclick="showSave()" title="Opslaan (Ctrl+S)" style="width:32px;height:32px;font-size:13px">💾</button>
   <button class="hud-btn" id="btn-load" onclick="triggerLoad()" title="Laden" style="width:32px;height:32px;font-size:13px">📂</button>
   <button class="hud-btn" id="btn-json" onclick="showJSON()" title="Bekijk ruwe JSON" style="width:32px;height:32px;font-size:11px;font-weight:700">{}</button>
+  <button class="hud-btn" id="btn-clear" onclick="clearCanvas()" title="Canvas leegmaken" style="width:32px;height:32px;font-size:18px;line-height:1">🗑️</button>
   <input type="file" id="file-input" accept=".npcproj,.json,.yaml,.yml" style="display:none" onchange="loadFromFile(event)">
   <div class="spacer"></div>
   <div style="position:relative;display:flex;align-items:center">
@@ -347,7 +348,11 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); co
       </div>
       <div class="tool" draggable="true" ondragstart="startDrag(event,'condition')" onclick="addNodeCenter('condition')" data-tooltip="⚡ Conditie&#10;Controleer een variabele.&#10;Groene poort = conditie is waar.&#10;Rode poort = conditie is niet waar.">
         <div class="tool-ic" style="background:#451a03">⚡</div>
-        <div class="tool-info"><div class="tool-name">Conditie</div><div class="tool-desc">If / else logica</div></div>
+        <div class="tool-info"><div class="tool-name" id="tt-condition">Conditie</div><div class="tool-desc" id="nd-condition">If / else logica</div></div>
+      </div>
+      <div class="tool" draggable="true" ondragstart="startDrag(event,'gate')" onclick="addNodeCenter('gate')" data-tooltip="⊕ Logische Gate&#10;Combineer meerdere condities&#10;met AND of OR logica.&#10;Heeft meerdere ingangspoorten.">
+        <div class="tool-ic" style="background:#1a1a2e;color:#818cf8;font-size:16px;font-weight:900">⊕</div>
+        <div class="tool-info"><div class="tool-name">Gate</div><div class="tool-desc">AND / OR logica</div></div>
       </div>
       <div class="tool" draggable="true" ondragstart="startDrag(event,'action')" onclick="addNodeCenter('action')" data-tooltip="⚙ Actie&#10;Voer iets uit op de achtergrond:&#10;geef een item, speel een geluid,&#10;stel een variabele in, of&#10;voer een commando uit.">
         <div class="tool-ic" style="background:#2e1065">⚙</div>
@@ -418,6 +423,12 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); co
     <div id="node-layer"></div>
 
     <div class="canvas-hint" id="canvas-hint">Sleep een element van de sidebar naar het canvas om te beginnen</div>
+
+    <!-- Node count warning banner -->
+    <div id="node-warning" style="display:none;position:absolute;top:14px;left:50%;transform:translateX(-50%);background:var(--amber-dim);border:1px solid var(--amber);border-radius:20px;padding:5px 14px 5px 12px;font-size:11px;color:var(--amber);z-index:60;display:none;align-items:center;gap:8px;white-space:nowrap">
+      <span id="node-warning-text"></span>
+      <button onclick="document.getElementById('node-warning').style.display='none'" style="background:none;border:none;color:var(--amber);font-size:13px;cursor:pointer;padding:0;line-height:1;opacity:.7" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='.7'">×</button>
+    </div>
 
     <!-- Lus waarschuwing / algemene toast -->
     <div id="loop-toast" style="display:none;position:absolute;top:14px;left:50%;transform:translateX(-50%);background:var(--amber-dim);border:1px solid var(--amber);border-radius:10px;padding:10px 18px;font-size:12px;color:var(--amber);z-index:200;max-width:440px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.4);pointer-events:auto">
@@ -1218,6 +1229,7 @@ const NODE_COLORS = {
   dialog:    { bg:'#0d2218', border:'#1a4a30', icon:'💬', label:'Dialoog',    accent:'#4ade80' },
   choice:    { bg:'#0d1e33', border:'#1a3a5f', icon:'🔀', label:'Keuze',      accent:'#60a5fa' },
   condition: { bg:'#2a1200', border:'#5a2800', icon:'⚡', label:'Conditie',   accent:'#fbbf24' },
+  gate:      { bg:'#1a1a2e', border:'#2d2d5a', icon:'⊕', label:'Gate',        accent:'#818cf8' },
   action:    { bg:'#180d33', border:'#3a1f6f', icon:'⚙',  label:'Actie',      accent:'#a78bfa' },
   jump:      { bg:'#001f1e', border:'#054040', icon:'↗',  label:'Sprong',     accent:'#2dd4bf' },
   end:       { bg:'#2a0808', border:'#5a1414', icon:'⏹', label:'Einde',      accent:'#f87171' },
@@ -1257,6 +1269,7 @@ function mkNode(type, x, y) {
   if (type==='dialog'||type==='end') { base.text={}; base.npc=S.npcs[0]?.id||''; S.langs.forEach(l=>base.text[l]=''); }
   if (type==='choice') { base.text={}; base.choices=[{label:{}},{label:{}}]; S.langs.forEach(l=>{base.text[l]=''; base.choices.forEach(c=>c.label[l]='');}); }
   if (type==='condition') { base.variable=''; base.operator='=='; base.value=''; }
+  if (type==='gate') { base.gateType='AND'; base.inputs=2; }
   if (type==='action') { base.actionType='give_item'; base.actionValue=''; base.actionAmount=1; base.actionTake=false; }
   if (type==='jump') { base.target=''; }
   return base;
@@ -1310,11 +1323,25 @@ function buildNodeEl(node) {
     const opts = (node.choices||[]).map((ch,i)=>`<div class="choice-pill"><div class="choice-dot" style="background:${CHOICE_COLORS[i%6]}"></div><span>${(ch.label&&ch.label[lang])||'Optie '+(i+1)}</span></div>`).join('');
     bodyHTML = `${q?`<div class="node-text-display" style="margin-bottom:4px">"${q}"</div>`:''}${opts}`;
   } else if (node.type==='condition') {
+    const varTxt = node.variable || '…';
+    const op     = node.operator  || '==';
+    const val    = node.value     || '…';
     bodyHTML = `
-      <div class="node-condition-code">${node.variable||'var'} ${node.operator||'=='} "${node.value||''}"</div>
-      <div style="display:flex;justify-content:space-between;margin-top:7px;font-size:10px;font-weight:600;">
-        <span style="color:#4ade80">✓ Ja / true</span>
-        <span style="color:#f87171">✗ Nee / false</span>
+      <div style="background:var(--bg);border:1px solid var(--amber-dim);border-radius:6px;padding:7px 10px;margin-bottom:8px">
+        <div style="font-size:9px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px">IF</div>
+        <div style="font-family:'Consolas',monospace;font-size:12px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+          <span style="color:var(--text);background:var(--bg3);padding:1px 6px;border-radius:4px">${varTxt}</span>
+          <span style="color:var(--text2);font-weight:700;margin:0 4px">${op}</span>
+          <span style="color:var(--text);background:var(--bg3);padding:1px 6px;border-radius:4px">"${val}"</span>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;font-size:10px;font-weight:700">
+        <div style="padding:5px 6px;border-radius:5px;background:#0f2e18;border:1px solid #14532d;color:#4ade80;text-align:center;display:flex;align-items:center;justify-content:center;gap:4px">
+          <div style="width:7px;height:7px;border-radius:50%;background:#4ade80;flex-shrink:0"></div>✓ waar
+        </div>
+        <div style="padding:5px 6px;border-radius:5px;background:#2a0808;border:1px solid #450a0a;color:#f87171;text-align:center;display:flex;align-items:center;justify-content:center;gap:4px">
+          <div style="width:7px;height:7px;border-radius:50%;background:#f87171;flex-shrink:0"></div>✗ onwaar
+        </div>
       </div>`;
   } else if (node.type==='action') {
     bodyHTML = `<div style="font-size:11px;color:var(--purple)">
@@ -1330,6 +1357,82 @@ function buildNodeEl(node) {
   } else if (node.type==='jump') {
     const tgt = S.nodes.find(n=>n.id===node.target);
     bodyHTML = `<div class="node-jump-target">→ ${tgt?`Node #${tgt.id}`:'(selecteer doel)'}</div>`;
+  if (node.type==='gate') {
+    const trueConn  = S.conns.find(c=>c.from===node.id&&c.fp==='out-true');
+    const falseConn = S.conns.find(c=>c.from===node.id&&c.fp==='out-false');
+    const trueNode  = trueConn  ? S.nodes.find(n=>n.id===trueConn.to)  : null;
+    const falseNode = falseConn ? S.nodes.find(n=>n.id===falseConn.to) : null;
+    const inputs    = node.gateType === 'NOT' ? 1 : (node.inputs || 2);
+    const nid       = node.id;
+    const gt        = node.gateType || 'AND';
+
+    const gateBtns  = ['AND','OR','NOT'].map(function(g) {
+      const active  = g === gt;
+      const border  = g !== 'NOT' ? 'border-right:1px solid var(--border);' : '';
+      return '<button onclick="setField(' + JSON.stringify(nid) + ',\'gateType\',' + JSON.stringify(g) + ');buildPanel()"'
+           + ' style="flex:1;padding:7px 0;border:none;font-size:12px;font-weight:800;font-family:monospace;cursor:pointer;'
+           + border + 'background:' + (active ? 'var(--bg4)' : 'var(--bg3)') + ';'
+           + 'color:' + (active ? '#818cf8' : 'var(--text3)') + '">' + g + '</button>';
+    }).join('');
+
+    const inputsSection = gt === 'NOT'
+      ? '<div style="font-size:11px;color:var(--text2);padding:8px;background:var(--bg3);border-radius:6px">NOT keert de inkomende waarde om — true wordt false en omgekeerd.</div>'
+      : '<div class="rp-label">Aantal ingangen</div>'
+        + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+        + '<button onclick="changeGateInputs(' + JSON.stringify(nid) + ',-1)" style="width:28px;height:28px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:16px;cursor:pointer">−</button>'
+        + '<span style="font-size:14px;font-weight:700;color:var(--text);min-width:20px;text-align:center">' + inputs + '</span>'
+        + '<button onclick="changeGateInputs(' + JSON.stringify(nid) + ',1)" style="width:28px;height:28px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:16px;cursor:pointer">+</button>'
+        + '<span style="font-size:10px;color:var(--text3)">max 4</span></div>'
+        + '<div style="font-size:10px;color:var(--text3)">'
+        + (gt === 'AND' ? 'Alle ingangen moeten waar zijn voor true uitgang' : 'Minstens 1 ingang moet waar zijn voor true uitgang')
+        + '</div>';
+
+    const inportItems = Array.from({length: inputs}, function(_,i) {
+      const conn = S.conns.find(function(c){ return c.to===nid && c.tp===('in'+i); });
+      const src  = conn ? S.nodes.find(function(n){ return n.id===conn.from; }) : null;
+      const col  = conn ? 'var(--border2)' : 'var(--border)';
+      const txt  = src ? ((NODE_COLORS[src.type] ? NODE_COLORS[src.type].icon : '') + ' ' + src.id) : 'Niet verbonden';
+      const tcol = src ? 'var(--text2)' : 'var(--amber)';
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:6px;background:var(--bg3);border:1px solid ' + col + '">'
+           + '<div style="width:8px;height:8px;border-radius:50%;background:#818cf8;flex-shrink:0"></div>'
+           + '<span style="font-size:11px;color:var(--text2);flex:1">In ' + (i+1) + '</span>'
+           + '<span style="font-size:10px;color:' + tcol + '">' + txt + '</span></div>';
+    }).join('');
+
+    const mkOut = function(node2, color, border, label, port) {
+      const dest = node2 ? ((NODE_COLORS[node2.type] ? NODE_COLORS[node2.type].icon : '') + ' ' + node2.id) : '<span style="color:var(--amber)">Niet verbonden</span>';
+      return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:7px;background:var(--bg3);border:1.5px solid ' + border + '">'
+           + '<div style="width:10px;height:10px;border-radius:50%;background:' + color + ';flex-shrink:0"></div>'
+           + '<div style="flex:1"><div style="font-size:11px;font-weight:700;color:' + color + '">' + label + '</div>'
+           + '<div style="font-size:10px;color:var(--text3);margin-top:1px">' + dest + '</div></div>'
+           + '<div style="font-size:9px;color:var(--text3)">' + port + '</div></div>';
+    };
+
+    contentHTML += '<div class="rp-section">'
+      + '<div class="rp-label">Gate type</div>'
+      + '<div style="display:flex;gap:0;border:1px solid var(--border);border-radius:7px;overflow:hidden;margin-bottom:10px">' + gateBtns + '</div>'
+      + inputsSection + '</div>'
+      + '<div class="rp-section"><div class="rp-label">Ingangen</div>'
+      + '<div style="display:flex;flex-direction:column;gap:4px">' + inportItems + '</div></div>'
+      + '<div class="rp-section"><div class="rp-label">Uitgangen</div>'
+      + '<div style="display:flex;flex-direction:column;gap:6px">'
+      + mkOut(trueNode,  '#4ade80', '#14532d', '\u2713 Waar (true)',   'linker poort')
+      + mkOut(falseNode, '#f87171', '#450a0a', '\u2717 Onwaar (false)', 'rechter poort')
+      + '</div></div>';
+  }
+    bodyHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <div style="display:flex;flex-direction:column;gap:3px">
+          ${Array.from({length:inputs},(_,i)=>`<div style="font-size:9px;color:var(--text3)">In ${i+1}</div>`).join('')}
+        </div>
+        <div style="flex:1;text-align:center">
+          <div style="display:inline-block;padding:4px 14px;border-radius:6px;background:var(--bg);border:1.5px solid #2d2d5a;font-size:13px;font-weight:800;color:#818cf8;font-family:monospace;letter-spacing:.05em">${node.gateType||'AND'}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+          <div style="font-size:9px;font-weight:700;color:#4ade80">✓ waar</div>
+          <div style="font-size:9px;font-weight:700;color:#f87171">✗ onwaar</div>
+        </div>
+      </div>`;
   }
 
   // Ports
@@ -1337,9 +1440,26 @@ function buildNodeEl(node) {
   if (node.type==='choice') {
     outPorts = (node.choices||[]).map((_,i)=>`<div class="port" style="background:${CHOICE_COLORS[i%6]};bottom:-6px;right:${14+i*20}px" id="p-${node.id}-out${i}" onmousedown="portMD(event,'${node.id}','out${i}')"></div>`).join('');
   } else if (node.type==='condition') {
-    // Two ports: true (green, left) and false (red, right)
     outPorts = `
-      <div class="port" style="background:#4ade80;bottom:-6px;left:18px" id="p-${node.id}-out-true" onmousedown="portMD(event,'${node.id}','out-true')"></div>
+      <div style="position:absolute;bottom:-18px;left:0;right:0;display:flex;justify-content:space-between;padding:0 8px;pointer-events:none">
+        <span style="font-size:9px;font-weight:700;color:#4ade80">✓</span>
+        <span style="font-size:9px;font-weight:700;color:#f87171">✗</span>
+      </div>
+      <div class="port" style="background:#4ade80;bottom:-6px;left:18px" id="p-${node.id}-out-true"  onmousedown="portMD(event,'${node.id}','out-true')"></div>
+      <div class="port" style="background:#f87171;bottom:-6px;right:18px" id="p-${node.id}-out-false" onmousedown="portMD(event,'${node.id}','out-false')"></div>`;
+  } else if (node.type==='gate') {
+    const inputs = node.gateType === 'NOT' ? 1 : (node.inputs || 2);
+    const inPorts = Array.from({length:inputs},(_,i) => {
+      const xPos = Math.round(((i+1) * 220) / (inputs+1));
+      return `<div class="port port-in" style="background:#818cf8;top:-6px;left:${xPos}px;margin-left:-6px" id="p-${node.id}-in${i}" onmousedown="portMD(event,'${node.id}','in${i}')"></div>`;
+    }).join('');
+    outPorts = `
+      ${inPorts}
+      <div style="position:absolute;bottom:-18px;left:0;right:0;display:flex;justify-content:space-between;padding:0 8px;pointer-events:none">
+        <span style="font-size:9px;font-weight:700;color:#4ade80">✓</span>
+        <span style="font-size:9px;font-weight:700;color:#f87171">✗</span>
+      </div>
+      <div class="port" style="background:#4ade80;bottom:-6px;left:18px" id="p-${node.id}-out-true"  onmousedown="portMD(event,'${node.id}','out-true')"></div>
       <div class="port" style="background:#f87171;bottom:-6px;right:18px" id="p-${node.id}-out-false" onmousedown="portMD(event,'${node.id}','out-false')"></div>`;
   } else {
     outPorts = `<div class="port" style="background:${c.accent};bottom:-6px;right:14px" id="p-${node.id}-out" onmousedown="portMD(event,'${node.id}','out')"></div>`;
@@ -1514,7 +1634,7 @@ document.addEventListener('mouseup', e => {
       const nodeId   = withoutPrefix.slice(0, lastDash);  // "n3"
 
       // Alleen verbinden met ingangspoort van andere node
-      if (portName === 'in' && nodeId !== S.connectFrom.id) {
+      if ((portName === 'in' || /^in\d+$/.test(portName)) && nodeId !== S.connectFrom.id) {
         const fromId = S.connectFrom.id;
         const fp     = S.connectFrom.port;
 
@@ -1596,14 +1716,13 @@ function onDragOver(e) {
 }
 
 function addNodeCenter(type) {
-  // Voeg node toe in het midden van het zichtbare canvas
   const wr = document.getElementById('canvas-wrap').getBoundingClientRect();
   const cx = Math.round(((wr.width  / 2 - S.panX) / S.scale) / 10) * 10;
   const cy = Math.round(((wr.height / 2 - S.panY) / S.scale) / 10) * 10;
-  // Kleine offset zodat meerdere klikken niet exact overlappen
   const offset = S.nodes.length * 20 % 120;
   const n = mkNode(type, cx - 110 + offset, cy - 40 + offset);
   S.nodes.push(n);
+  checkNodeCountWarning();
   updateHint();
   renderAll();
   selectNode(n.id);
@@ -1619,10 +1738,21 @@ function onDrop(e) {
   const n = mkNode(_dragType, x, y);
   S.nodes.push(n);
   _dragType = null;
+  checkNodeCountWarning();
   updateHint();
   renderAll();
   selectNode(n.id);
   saveHist();
+}
+
+function checkNodeCountWarning() {
+  const count = S.nodes.length;
+  const banner = document.getElementById('node-warning');
+  const text   = document.getElementById('node-warning-text');
+  if (count === 25 || count === 50) {
+    text.textContent = count === 25 ? t('node_warn_25') : t('node_warn_50');
+    banner.style.display = 'flex';
+  }
 }
 
 // ─── SELECT & PANEL ──────────────────────────────────────────────────────────
@@ -1639,202 +1769,255 @@ function setNodeLang(nodeId, lang) {
 }
 
 function buildPanel() {
-  const empty = document.getElementById('rp-empty');
+  const empty  = document.getElementById('rp-empty');
   const scroll = document.getElementById('rp-scroll');
   const header = document.getElementById('rp-header');
-
   if (!S.selected) {
     empty.style.display='block'; scroll.style.display='none';
-    header.textContent = 'Eigenschappen';
+    header.textContent = t('rp_title');
     return;
   }
   const node = S.nodes.find(n=>n.id===S.selected);
   if (!node) return;
   empty.style.display='none'; scroll.style.display='block';
   const c = NODE_COLORS[node.type];
-  header.innerHTML = `<span style="color:${c.accent}">${c.icon}</span> ${c.label} node`;
+  header.innerHTML = '<span style="color:'+c.accent+'">'+c.icon+'</span> '+c.label+' node';
 
-  // Active panel lang
   if (!S.langs.includes(S.panelLang)) S.panelLang = S.langs[0];
 
-  const langTabsHTML = `
-    <div class="rp-section" style="padding-bottom:6px">
-      <div class="rp-label">${t('rp_edit_lang')}</div>
-      <div class="rp-lang-tabs">
-        ${S.langs.map(l=>`<div class="rp-lang-tab${l===S.panelLang?' active':''}" onclick="setPanelLang('${l}')">${l}</div>`).join('')}
-      </div>
-    </div>`;
+  // Lang tabs
+  var langTabsHTML = '<div class="rp-section" style="padding-bottom:6px">'
+    + '<div class="rp-label">'+t('rp_edit_lang')+'</div>'
+    + '<div class="rp-lang-tabs">'
+    + S.langs.map(function(l){ return '<div class="rp-lang-tab'+(l===S.panelLang?' active':'')+'" onclick="setPanelLang(\''+l+'\')">'+l+'</div>'; }).join('')
+    + '</div></div>';
 
-  let contentHTML = '';
+  var h = '';
 
-  if (node.type==='dialog'||node.type==='end') {
-    const txt = node.text?.[S.panelLang] || '';
-    contentHTML += `
-      <div class="rp-section">
-        <div class="rp-label">${t('rp_text')} [${S.panelLang}]</div>
-        <textarea class="rp-input rp-textarea" placeholder="${t('rp_text_placeholder')}" oninput="setField('${node.id}','text.${S.panelLang}',this.value)">${txt}</textarea>
-      </div>`;
+  // Dialog / End
+  if (node.type==='dialog' || node.type==='end') {
+    var txt = (node.text && node.text[S.panelLang]) || '';
+    h += '<div class="rp-section">'
+       + '<div class="rp-label">'+t('rp_text')+' ['+S.panelLang+']</div>'
+       + '<textarea class="rp-input rp-textarea" placeholder="'+t('rp_text_placeholder')+'" oninput="setFieldLive(\''+node.id+'\',\'text.'+S.panelLang+'\',this.value)" onblur="saveHist()">'+txt+'</textarea>'
+       + '</div>';
     if (node.type==='dialog') {
-      contentHTML += `
-        <div class="rp-section">
-          <div class="rp-label">${t('rp_npc')}</div>
-          <select class="rp-select" onchange="setField('${node.id}','npc',this.value)">
-            ${S.npcs.map(npc=>`<option value="${npc.id}"${npc.id===node.npc?' selected':''}>${npc.name}</option>`).join('')}
-          </select>
-        </div>`;
+      h += '<div class="rp-section">'
+         + '<div class="rp-label">'+t('rp_npc')+'</div>'
+         + '<select class="rp-select" onchange="setField(\''+node.id+'\',\'npc\',this.value)">'
+         + '<option value="">— '+t('rp_npc')+' —</option>'
+         + S.npcs.map(function(npc){ return '<option value="'+npc.id+'"'+(npc.id===node.npc?' selected':'')+'>'+npc.name+'</option>'; }).join('')
+         + '</select></div>';
     }
   }
 
+  // Choice
   if (node.type==='choice') {
-    const q = node.text?.[S.panelLang] || '';
-    contentHTML += `
-      <div class="rp-section">
-        <div class="rp-label">${t('rp_question')} [${S.panelLang}]</div>
-        <textarea class="rp-input" style="min-height:50px" placeholder="${t('rp_question_placeholder')}" oninput="setField('${node.id}','text.${S.panelLang}',this.value)">${q}</textarea>
-      </div>
-      <div class="rp-section">
-        <div class="rp-label">${t('rp_choices')} [${S.panelLang}]</div>
-        ${(node.choices||[]).map((ch,i)=>`
-          <div class="choice-edit-row">
-            <div class="choice-edit-dot" style="background:${CHOICE_COLORS[i%6]}"></div>
-            <input class="choice-edit-input" value="${ch.label?.[S.panelLang]||''}" placeholder="${t('opt_prefix')}${i+1}" oninput="setChoice('${node.id}',${i},'${S.panelLang}',this.value)">
-            <button class="choice-del" onclick="delChoice('${node.id}',${i})">×</button>
-          </div>`).join('')}
-        <button class="rp-add-btn" onclick="addChoice('${node.id}')">${t('rp_add_choice')}</button>
-      </div>`;
+    var q = (node.text && node.text[S.panelLang]) || '';
+    h += '<div class="rp-section">'
+       + '<div class="rp-label">'+t('rp_question')+' ['+S.panelLang+']</div>'
+       + '<textarea class="rp-input" style="min-height:50px" placeholder="'+t('rp_question_placeholder')+'" oninput="setFieldLive(\''+node.id+'\',\'text.'+S.panelLang+'\',this.value)" onblur="saveHist()">'+q+'</textarea>'
+       + '</div>';
+    h += '<div class="rp-section">'
+       + '<div class="rp-label">'+t('rp_choices')+' ['+S.panelLang+']</div>'
+       + (node.choices||[]).map(function(ch,i){
+           return '<div class="choice-edit-row">'
+             + '<div class="choice-edit-dot" style="background:'+CHOICE_COLORS[i%6]+'"></div>'
+             + '<input class="choice-edit-input" value="'+((ch.label&&ch.label[S.panelLang])||'')+'" placeholder="'+t('opt_prefix')+(i+1)+'" oninput="setChoice(\''+node.id+'\','+i+',\''+S.panelLang+'\',this.value)">'
+             + '<button class="choice-del" onclick="delChoice(\''+node.id+'\','+i+')">×</button>'
+             + '</div>';
+         }).join('')
+       + '<button class="rp-add-btn" onclick="addChoice(\''+node.id+'\')">'+t('rp_add_choice')+'</button>'
+       + '</div>';
   }
 
-  if (node.type==='condition') {
-    const trueConn  = S.conns.find(c=>c.from===node.id&&c.fp==='out-true');
-    const falseConn = S.conns.find(c=>c.from===node.id&&c.fp==='out-false');
-    contentHTML += `
-      <div class="rp-section">
-        <div class="rp-label">${t('rp_variable')}</div>
-        <input class="rp-input" value="${node.variable||''}" placeholder="${t('rp_var_placeholder')}" oninput="setField('${node.id}','variable',this.value)">
-        <div class="rp-label" style="margin-top:8px">${t('rp_operator')}</div>
-        <select class="rp-select" onchange="setField('${node.id}','operator',this.value)">
-          ${['==','!=','>','<','>=','<='].map(op=>`<option${op===node.operator?' selected':''}>${op}</option>`).join('')}
-        </select>
-        <div class="rp-label" style="margin-top:8px">${t('rp_value')}</div>
-        <input class="rp-input" value="${node.value||''}" placeholder="${t('rp_val_placeholder')}" oninput="setField('${node.id}','value',this.value)">
-      </div>
-      <div class="rp-section">
-        <div class="rp-label">Uitgangen</div>
-        <div style="display:flex;flex-direction:column;gap:6px">
-          <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;background:var(--bg3);border:1px solid #14532d">
-            <div style="width:9px;height:9px;border-radius:50%;background:#4ade80;flex-shrink:0"></div>
-            <span style="font-size:11px;font-weight:600;color:#4ade80;flex:1">Ja / true</span>
-            <span style="font-size:10px;color:var(--text3)">${trueConn ? '→ '+trueConn.to : 'Niet verbonden'}</span>
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;background:var(--bg3);border:1px solid #450a0a">
-            <div style="width:9px;height:9px;border-radius:50%;background:#f87171;flex-shrink:0"></div>
-            <span style="font-size:11px;font-weight:600;color:#f87171;flex:1">Nee / false</span>
-            <span style="font-size:10px;color:var(--text3)">${falseConn ? '→ '+falseConn.to : 'Niet verbonden'}</span>
-          </div>
-        </div>
-      </div>`;
-  }
+  // Gate
+  if (node.type==='gate') {
+    var gt = node.gateType || 'AND';
+    var inputs = gt==='NOT' ? 1 : (node.inputs||2);
+    var trueConn  = S.conns.find(function(c){return c.from===node.id&&c.fp==='out-true';});
+    var falseConn = S.conns.find(function(c){return c.from===node.id&&c.fp==='out-false';});
+    var trueNode  = trueConn  ? S.nodes.find(function(n){return n.id===trueConn.to;})  : null;
+    var falseNode = falseConn ? S.nodes.find(function(n){return n.id===falseConn.to;}) : null;
 
-  if (node.type==='action') {
-    const isItem = node.actionType === 'give_item';
-    contentHTML += `
-      <div class="rp-section">
-        <div class="rp-label">${t('rp_action_type')}</div>
-        <select class="rp-select" onchange="setField('${node.id}','actionType',this.value);buildPanel()">
-          <option value="give_item"${node.actionType==='give_item'?' selected':''}>${t('at_give')}</option>
-          <option value="play_sound"${node.actionType==='play_sound'?' selected':''}>${t('at_sound')}</option>
-          <option value="set_var"${node.actionType==='set_var'?' selected':''}>${t('at_setvar')}</option>
-          <option value="run_cmd"${node.actionType==='run_cmd'?' selected':''}>${t('at_cmd')}</option>
-        </select>
-      </div>`;
-
-    if (isItem) {
-      // Item naam met suggesties
-      contentHTML += `
-        <div class="rp-section">
-          <div class="rp-label">${t('at_item_name')}</div>
-          <input class="rp-input" list="mc-items-${node.id}" value="${node.actionValue||''}"
-            placeholder="bijv. diamond_sword"
-            oninput="setField('${node.id}','actionValue',this.value)">
-          <datalist id="mc-items-${node.id}">
-            ${MC_ITEMS.map(i => `<option value="${i}">`).join('')}
-          </datalist>
-
-          <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
-            <div style="flex:1">
-              <div class="rp-label">${t('at_amount')}</div>
-              <div style="display:flex;align-items:center;gap:6px">
-                <button onclick="changeAmount('${node.id}',-1)" style="width:26px;height:26px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center" onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background='var(--bg3)'">−</button>
-                <input class="rp-input" type="number" min="1" max="64" value="${node.actionAmount||1}"
-                  style="width:60px;text-align:center"
-                  oninput="setField('${node.id}','actionAmount',Math.max(1,Math.min(64,parseInt(this.value)||1)))">
-                <button onclick="changeAmount('${node.id}',1)" style="width:26px;height:26px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center" onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background='var(--bg3)'">+</button>
-              </div>
-            </div>
-            <div style="flex:1">
-              <div class="rp-label">${t('at_direction')}</div>
-              <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:6px;overflow:hidden">
-                <button onclick="setField('${node.id}','actionTake',false);buildPanel()" style="flex:1;padding:5px 4px;border:none;font-size:11px;cursor:pointer;background:${!node.actionTake?'var(--accent-dim)':'var(--bg3)'};color:${!node.actionTake?'var(--accent)':'var(--text3)'}">🎁 ${t('at_give_short')}</button>
-                <button onclick="setField('${node.id}','actionTake',true);buildPanel()" style="flex:1;padding:5px 4px;border:none;border-left:1px solid var(--border);font-size:11px;cursor:pointer;background:${node.actionTake?'var(--red-dim)':'var(--bg3)'};color:${node.actionTake?'var(--red)':'var(--text3)'}">📤 ${t('at_take_short')}</button>
-              </div>
-            </div>
-          </div>
-        </div>`;
-    } else {
-      contentHTML += `
-        <div class="rp-section">
-          <div class="rp-label">${t('rp_action_val')}</div>
-          <input class="rp-input" value="${node.actionValue||''}" placeholder="${t('rp_action_val_placeholder')}" oninput="setField('${node.id}','actionValue',this.value)">
-        </div>`;
-    }
-  }
-
-  if (node.type==='jump') {
-    contentHTML += `
-      <div class="rp-section">
-        <div class="rp-label">${t('rp_jump_target')}</div>
-        <select class="rp-select" onchange="setField('${node.id}','target',this.value)">
-          <option value="">${t('rp_target_placeholder')}</option>
-          ${S.nodes.filter(n=>n.id!==node.id).map(n=>`<option value="${n.id}"${n.id===node.target?' selected':''}>${NODE_COLORS[n.type].icon} ${n.id} — ${n.type}</option>`).join('')}
-        </select>
-      </div>`;
-  }
-
-  // Translation status + vertaalknop
-  if (node.text && (node.type==='dialog'||node.type==='end'||node.type==='choice')) {
-    const missingLangs = S.langs.filter(l => !node.text[l] || node.text[l].length === 0);
-    const sourceLang   = S.langs.find(l => node.text[l] && node.text[l].length > 0);
-
-    const statusItems = S.langs.map(l => {
-      const ok = node.text[l] && node.text[l].length > 0;
-      return `
-        <div class="trans-item" style="justify-content:space-between">
-          <div style="display:flex;align-items:center;gap:5px">
-            <span class="trans-code">${l}</span>
-            <div class="trans-dot ${ok?'ok':'missing'}"></div>
-          </div>
-          ${!ok && sourceLang ? `<button onclick="translateNodeLang('${node.id}','${l}')" style="font-size:10px;padding:1px 6px;border-radius:8px;border:1px solid var(--blue-dim);background:var(--blue-dim);color:var(--blue);cursor:pointer" onmouseover="this.style.background='var(--blue)';this.style.color='#000'" onmouseout="this.style.background='var(--blue-dim)';this.style.color='var(--blue)'">${t('btn_translate')}</button>` : ''}
-        </div>`;
+    var gateBtns = ['AND','OR','NOT'].map(function(g){
+      return '<button onclick="setField(\''+node.id+'\',\'gateType\',\''+g+'\');buildPanel()" style="flex:1;padding:7px 0;border:none;font-size:12px;font-weight:800;font-family:monospace;cursor:pointer;'
+        +(g!=='NOT'?'border-right:1px solid var(--border);':'')
+        +'background:'+(g===gt?'var(--bg4)':'var(--bg3)')+';'
+        +'color:'+(g===gt?'#818cf8':'var(--text3)')+'">'+g+'</button>';
     }).join('');
 
-    contentHTML += `
-      <div class="rp-section">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-          <div class="rp-label" style="margin-bottom:0">${t('rp_trans_status')}</div>
-          ${missingLangs.length > 0 && sourceLang ? `<button onclick="translateNodeAll('${node.id}')" style="font-size:10px;padding:2px 8px;border-radius:8px;border:1px solid var(--blue-dim);background:var(--blue-dim);color:var(--blue);cursor:pointer;font-weight:600" onmouseover="this.style.background='var(--blue)';this.style.color='#000'" onmouseout="this.style.background='var(--blue-dim)';this.style.color='var(--blue)'">${t('btn_translate_all')} (${missingLangs.length})</button>` : ''}
-        </div>
-        <div class="trans-grid">${statusItems}</div>
-        <div id="trans-status-${node.id}" style="margin-top:6px;font-size:11px;color:var(--text3);display:none"></div>
-      </div>`;
+    var inputsSec = gt==='NOT'
+      ? '<div style="font-size:11px;color:var(--text2);padding:8px;background:var(--bg3);border-radius:6px">NOT keert de inkomende waarde om — true wordt false en omgekeerd.</div>'
+      : '<div class="rp-label">Aantal ingangen</div>'
+        +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+        +'<button onclick="changeGateInputs(\''+node.id+'\',-1)" style="width:28px;height:28px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:16px;cursor:pointer">−</button>'
+        +'<span style="font-size:14px;font-weight:700;color:var(--text);min-width:20px;text-align:center">'+inputs+'</span>'
+        +'<button onclick="changeGateInputs(\''+node.id+'\',1)" style="width:28px;height:28px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:16px;cursor:pointer">+</button>'
+        +'<span style="font-size:10px;color:var(--text3)">max 4</span>'
+        +'</div>'
+        +'<div style="font-size:10px;color:var(--text3)">'
+        +(gt==='AND'?'Alle ingangen moeten waar zijn voor true':'Minstens 1 ingang moet waar zijn voor true')
+        +'</div>';
+
+    var inItems = Array.from({length:inputs},function(_,i){
+      var conn = S.conns.find(function(c){return c.to===node.id&&c.tp==='in'+i;});
+      var src  = conn ? S.nodes.find(function(n){return n.id===conn.from;}) : null;
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:6px;background:var(--bg3);border:1px solid '+(conn?'var(--border2)':'var(--border)')+';">'
+        +'<div style="width:8px;height:8px;border-radius:50%;background:#818cf8;flex-shrink:0"></div>'
+        +'<span style="font-size:11px;color:var(--text2);flex:1">In '+(i+1)+'</span>'
+        +'<span style="font-size:10px;color:'+(src?'var(--text2)':'var(--amber)')+';">'+(src?((NODE_COLORS[src.type]?NODE_COLORS[src.type].icon:'')+' '+src.id):'⚠ Niet verbonden')+'</span>'
+        +'</div>';
+    }).join('');
+
+    var mkOut = function(n2,col,bdr,lbl,port){
+      return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:7px;background:var(--bg3);border:1.5px solid '+bdr+';">'
+        +'<div style="width:10px;height:10px;border-radius:50%;background:'+col+';flex-shrink:0"></div>'
+        +'<div style="flex:1"><div style="font-size:11px;font-weight:700;color:'+col+'">'+lbl+'</div>'
+        +'<div style="font-size:10px;color:var(--text3);margin-top:1px">'+(n2?((NODE_COLORS[n2.type]?NODE_COLORS[n2.type].icon:'')+' '+n2.id):'<span style="color:var(--amber)">⚠ Niet verbonden</span>')+'</div></div>'
+        +'<div style="font-size:9px;color:var(--text3)">'+port+'</div></div>';
+    };
+
+    h += '<div class="rp-section">'
+       + '<div class="rp-label">Gate type</div>'
+       + '<div style="display:flex;gap:0;border:1px solid var(--border);border-radius:7px;overflow:hidden;margin-bottom:10px">'+gateBtns+'</div>'
+       + inputsSec+'</div>'
+       + '<div class="rp-section"><div class="rp-label">Ingangen</div>'
+       + '<div style="display:flex;flex-direction:column;gap:4px">'+inItems+'</div></div>'
+       + '<div class="rp-section"><div class="rp-label">Uitgangen</div>'
+       + '<div style="display:flex;flex-direction:column;gap:6px">'
+       + mkOut(trueNode,'#4ade80','#14532d','\u2713 Waar (true)','linker poort')
+       + mkOut(falseNode,'#f87171','#450a0a','\u2717 Onwaar (false)','rechter poort')
+       + '</div></div>';
   }
 
-  contentHTML += `
-    <div class="rp-section">
-      <button class="rp-del-btn" onclick="deleteNode('${node.id}')">${t('rp_delete')}</button>
-    </div>`;
+  // Condition
+  if (node.type==='condition') {
+    var trueConn  = S.conns.find(function(c){return c.from===node.id&&c.fp==='out-true';});
+    var falseConn = S.conns.find(function(c){return c.from===node.id&&c.fp==='out-false';});
+    var trueNode  = trueConn  ? S.nodes.find(function(n){return n.id===trueConn.to;})  : null;
+    var falseNode = falseConn ? S.nodes.find(function(n){return n.id===falseConn.to;}) : null;
+    var varTxt = node.variable || '...';
+    var op     = node.operator || '==';
+    var val    = node.value    || '';
 
-  scroll.innerHTML = langTabsHTML + contentHTML;
+    var opBtns = ['==','!=','>','<','>=','<='].map(function(op2){
+      return '<button onclick="setField(\''+node.id+'\',\'operator\',\''+op2+'\')" style="padding:6px 0;border-radius:5px;border:1px solid '+(op2===op?'var(--amber)':'var(--border)')+';background:'+(op2===op?'var(--amber-dim)':'var(--bg3)')+';color:'+(op2===op?'var(--amber)':'var(--text2)')+';font-family:monospace;font-size:13px;font-weight:700;cursor:pointer">'+op2+'</button>';
+    }).join('');
+
+    var trueDestHTML  = trueNode  ? '<span style="color:var(--text2)">'+(NODE_COLORS[trueNode.type]?NODE_COLORS[trueNode.type].icon:'')+' '+trueNode.id+'</span>' : '<span style="color:var(--amber)">⚠ Niet verbonden — sleep van de groene poort</span>';
+    var falseDestHTML = falseNode ? '<span style="color:var(--text2)">'+(NODE_COLORS[falseNode.type]?NODE_COLORS[falseNode.type].icon:'')+' '+falseNode.id+'</span>' : '<span style="color:var(--amber)">⚠ Niet verbonden — sleep van de rode poort</span>';
+
+    h += '<div class="rp-section">'
+       + '<div style="background:var(--bg);border:1px solid var(--amber-dim);border-radius:8px;padding:12px 14px;margin-bottom:14px">'
+       + '<div style="font-size:9px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Preview</div>'
+       + '<div style="font-family:Consolas,monospace;font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap" id="cond-preview-'+node.id+'">'
+       + '<span style="color:var(--text);background:var(--bg3);padding:2px 8px;border-radius:4px">'+varTxt+'</span>'
+       + '<span style="color:var(--text2);font-weight:700;font-size:15px;margin:0 6px">'+op+'</span>'
+       + '<span style="color:var(--text);background:var(--bg3);padding:2px 8px;border-radius:4px">"'+val+'"</span>'
+       + '</div></div>'
+       + '<div class="rp-label">'+t('rp_variable')+'</div>'
+       + '<input class="rp-input" value="'+(node.variable||'')+'" placeholder="'+t('rp_var_placeholder')+'" oninput="setFieldLive(\''+node.id+'\',\'variable\',this.value);updateCondPreview(\''+node.id+'\')">'
+       + '<div class="rp-label" style="margin-top:10px">'+t('rp_operator')+'</div>'
+       + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:2px">'+opBtns+'</div>'
+       + '<div class="rp-label" style="margin-top:10px">'+t('rp_value')+'</div>'
+       + '<input class="rp-input" value="'+(node.value||'')+'" placeholder="'+t('rp_val_placeholder')+'" oninput="setFieldLive(\''+node.id+'\',\'value\',this.value);updateCondPreview(\''+node.id+'\')">'
+       + '</div>'
+       + '<div class="rp-section"><div class="rp-label" style="margin-bottom:8px">Uitgangen</div>'
+       + '<div style="display:flex;flex-direction:column;gap:6px">'
+       + '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;background:var(--bg3);border:1.5px solid #14532d"><div style="width:10px;height:10px;border-radius:50%;background:#4ade80;flex-shrink:0;box-shadow:0 0 6px #4ade8066"></div><div style="flex:1"><div style="font-size:12px;font-weight:700;color:#4ade80">\u2713 Waar</div><div style="font-size:10px;color:var(--text3);margin-top:2px">'+trueDestHTML+'</div></div><span style="font-size:9px;color:var(--text3);background:var(--bg);padding:2px 6px;border-radius:4px;border:1px solid var(--border)">links</span></div>'
+       + '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;background:var(--bg3);border:1.5px solid #450a0a"><div style="width:10px;height:10px;border-radius:50%;background:#f87171;flex-shrink:0;box-shadow:0 0 6px #f8717166"></div><div style="flex:1"><div style="font-size:12px;font-weight:700;color:#f87171">\u2717 Onwaar</div><div style="font-size:10px;color:var(--text3);margin-top:2px">'+falseDestHTML+'</div></div><span style="font-size:9px;color:var(--text3);background:var(--bg);padding:2px 6px;border-radius:4px;border:1px solid var(--border)">rechts</span></div>'
+       + '</div></div>';
+  }
+
+  // Action
+  if (node.type==='action') {
+    var isItem = node.actionType === 'give_item';
+    h += '<div class="rp-section">'
+       + '<div class="rp-label">'+t('rp_action_type')+'</div>'
+       + '<select class="rp-select" onchange="setField(\''+node.id+'\',\'actionType\',this.value);buildPanel()">'
+       + '<option value="give_item"'+(node.actionType==='give_item'?' selected':'')+'>'+t('at_give')+'</option>'
+       + '<option value="play_sound"'+(node.actionType==='play_sound'?' selected':'')+'>'+t('at_sound')+'</option>'
+       + '<option value="set_var"'+(node.actionType==='set_var'?' selected':'')+'>'+t('at_setvar')+'</option>'
+       + '<option value="run_cmd"'+(node.actionType==='run_cmd'?' selected':'')+'>'+t('at_cmd')+'</option>'
+       + '</select></div>';
+
+    if (isItem) {
+      h += '<div class="rp-section">'
+         + '<div class="rp-label">'+t('at_item_name')+'</div>'
+         + '<input class="rp-input" list="mc-items-'+node.id+'" value="'+(node.actionValue||'')+'" placeholder="bijv. diamond_sword" oninput="setFieldLive(\''+node.id+'\',\'actionValue\',this.value)">'
+         + '<datalist id="mc-items-'+node.id+'">'
+         + MC_ITEMS.map(function(item){ return '<option value="'+item+'">'; }).join('')
+         + '</datalist>'
+         + '<div style="display:flex;gap:8px;margin-top:8px;align-items:center">'
+         + '<div style="flex:1"><div class="rp-label">'+t('at_amount')+'</div>'
+         + '<div style="display:flex;align-items:center;gap:6px">'
+         + '<button onclick="changeAmount(\''+node.id+'\',-1)" style="width:26px;height:26px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:16px;cursor:pointer">−</button>'
+         + '<input class="rp-input" type="number" min="1" max="64" value="'+(node.actionAmount||1)+'" style="width:60px;text-align:center" oninput="setField(\''+node.id+'\',\'actionAmount\',Math.max(1,Math.min(64,parseInt(this.value)||1)))">'
+         + '<button onclick="changeAmount(\''+node.id+'\',1)" style="width:26px;height:26px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:16px;cursor:pointer">+</button>'
+         + '</div></div>'
+         + '<div style="flex:1"><div class="rp-label">'+t('at_direction')+'</div>'
+         + '<div style="display:flex;gap:0;border:1px solid var(--border);border-radius:6px;overflow:hidden">'
+         + '<button onclick="setField(\''+node.id+'\',\'actionTake\',false);buildPanel()" style="flex:1;padding:5px 4px;border:none;font-size:11px;cursor:pointer;background:'+(!node.actionTake?'var(--accent-dim)':'var(--bg3)')+';color:'+(!node.actionTake?'var(--accent)':'var(--text3)')+'">&#127873; '+t('at_give_short')+'</button>'
+         + '<button onclick="setField(\''+node.id+'\',\'actionTake\',true);buildPanel()" style="flex:1;padding:5px 4px;border:none;border-left:1px solid var(--border);font-size:11px;cursor:pointer;background:'+(node.actionTake?'var(--red-dim)':'var(--bg3)')+';color:'+(node.actionTake?'var(--red)':'var(--text3)')+'">&#128228; '+t('at_take_short')+'</button>'
+         + '</div></div></div></div>';
+    } else {
+      h += '<div class="rp-section">'
+         + '<div class="rp-label">'+t('rp_action_val')+'</div>'
+         + '<input class="rp-input" value="'+(node.actionValue||'')+'" placeholder="'+t('rp_action_val_placeholder')+'" oninput="setFieldLive(\''+node.id+'\',\'actionValue\',this.value)">'
+         + '</div>';
+    }
+  }
+
+  // Jump
+  if (node.type==='jump') {
+    h += '<div class="rp-section">'
+       + '<div class="rp-label">'+t('rp_jump_target')+'</div>'
+       + '<select class="rp-select" onchange="setField(\''+node.id+'\',\'target\',this.value)">'
+       + '<option value="">'+t('rp_target_placeholder')+'</option>'
+       + S.nodes.filter(function(n){return n.id!==node.id;}).map(function(n){
+           return '<option value="'+n.id+'"'+(n.id===node.target?' selected':'')+'>'+(NODE_COLORS[n.type]?NODE_COLORS[n.type].icon:'')+' '+n.id+' \u2014 '+n.type+'</option>';
+         }).join('')
+       + '</select></div>';
+  }
+
+  // Translation status
+  if (node.text && (node.type==='dialog'||node.type==='end'||node.type==='choice')) {
+    var missingLangs = S.langs.filter(function(l){ return !node.text[l] || node.text[l].length===0; });
+    var sourceLang   = S.langs.find(function(l){ return node.text[l] && node.text[l].length>0; });
+
+    var statusItems = S.langs.map(function(l){
+      var ok = node.text[l] && node.text[l].length > 0;
+      var btn = (!ok && sourceLang)
+        ? '<button onclick="translateNodeLang(\''+node.id+'\',\''+l+'\')" class="trans-btn" data-lang="'+l+'" style="font-size:10px;padding:1px 6px;border-radius:8px;border:1px solid var(--blue-dim);background:var(--blue-dim);color:var(--blue);cursor:pointer">'+t('btn_translate')+'</button>'
+        : '';
+      return '<div class="trans-item" style="justify-content:space-between">'
+        + '<div style="display:flex;align-items:center;gap:5px">'
+        + '<span class="trans-code">'+l+'</span>'
+        + '<div class="trans-dot '+(ok?'ok':'missing')+'" data-lang="'+l+'"></div>'
+        + '</div>'+btn+'</div>';
+    }).join('');
+
+    var allBtn = (missingLangs.length>0 && sourceLang)
+      ? '<button id="trans-all-btn-'+node.id+'" onclick="translateNodeAll(\''+node.id+'\')" style="font-size:10px;padding:2px 8px;border-radius:8px;border:1px solid var(--blue-dim);background:var(--blue-dim);color:var(--blue);cursor:pointer;font-weight:600">'+t('btn_translate_all')+' ('+missingLangs.length+')</button>'
+      : '';
+
+    h += '<div class="rp-section">'
+       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
+       + '<div class="rp-label" style="margin-bottom:0">'+t('rp_trans_status')+'</div>'
+       + allBtn+'</div>'
+       + '<div class="trans-grid">'+statusItems+'</div>'
+       + '<div id="trans-status-'+node.id+'" style="margin-top:6px;font-size:11px;color:var(--text3);display:none"></div>'
+       + '</div>';
+  }
+
+  h += '<div class="rp-section">'
+     + '<button class="rp-del-btn" onclick="deleteNode(\''+node.id+'\')">'+t('rp_delete')+'</button>'
+     + '</div>';
+
+  scroll.innerHTML = langTabsHTML + h;
 }
+
 
 function setPanelLang(l) {
   S.panelLang = l;
@@ -1850,6 +2033,51 @@ function setField(id, field, value) {
   renderNodes();
   renderArrows();
   buildPanel();
+}
+
+// Lichtgewicht versie voor tekstvelden — herbouwt het paneel NIET
+// zodat de cursor niet springt tijdens het typen
+function setFieldLive(id, field, value) {
+  const node = S.nodes.find(n=>n.id===id);
+  if (!node) return;
+  const parts = field.split('.');
+  if (parts.length===2) { if(!node[parts[0]])node[parts[0]]={};  node[parts[0]][parts[1]]=value; }
+  else node[field] = value;
+  // Alleen de node-kaart updaten, niet het paneel
+  renderNodes();
+  // Vertaalstatus stipjes live updaten zonder focus te verliezen
+  updateTransDots(id);
+}
+
+function updateCondPreview(nodeId) {
+  const node = S.nodes.find(n => n.id === nodeId);
+  if (!node) return;
+  const el = document.getElementById(`cond-preview-${nodeId}`);
+  if (!el) return;
+  const varTxt = node.variable || 'variabele';
+  const op     = node.operator  || '==';
+  const val    = node.value     || '';
+  el.innerHTML = `<span style="color:var(--text);background:var(--bg3);padding:1px 6px;border-radius:4px">${varTxt}</span><span style="color:var(--text2);font-weight:700;margin:0 6px">${op}</span><span style="color:var(--text);background:var(--bg3);padding:1px 6px;border-radius:4px">"${val}"</span>`;
+  renderNodes();
+}
+
+function updateTransDots(nodeId) {
+  const node = S.nodes.find(n=>n.id===nodeId);
+  if (!node || !node.text) return;
+  S.langs.forEach(l => {
+    const dot = document.querySelector(`#rp-scroll .trans-dot[data-lang="${l}"]`);
+    const btn = document.querySelector(`#rp-scroll .trans-btn[data-lang="${l}"]`);
+    const ok  = node.text[l] && node.text[l].length > 0;
+    if (dot) { dot.classList.toggle('ok', ok); dot.classList.toggle('missing', !ok); }
+    if (btn) btn.style.display = ok ? 'none' : 'inline-block';
+  });
+  // Vertaal-alles knop updaten
+  const allBtn = document.getElementById(`trans-all-btn-${nodeId}`);
+  if (allBtn) {
+    const missing = S.langs.filter(l => !node.text[l] || !node.text[l].length);
+    allBtn.style.display = missing.length > 0 ? 'inline-block' : 'none';
+    allBtn.textContent = `${t('btn_translate_all')} (${missing.length})`;
+  }
 }
 
 function setChoice(id, idx, lang, value) {
@@ -1903,12 +2131,29 @@ function addLang() {
   // Legacy fallback — niet meer direct aangeroepen
 }
 
+function changeGateInputs(nodeId, delta) {
+  const node = S.nodes.find(n => n.id === nodeId);
+  if (!node) return;
+  const newCount = Math.max(2, Math.min(4, (node.inputs || 2) + delta));
+  // Remove connections to ports that no longer exist
+  if (newCount < node.inputs) {
+    for (let i = newCount; i < node.inputs; i++) {
+      S.conns = S.conns.filter(c => !(c.to === nodeId && c.tp === 'in' + i));
+    }
+  }
+  node.inputs = newCount;
+  renderAll();
+  buildPanel();
+  saveHist();
+}
+
 function changeAmount(nodeId, delta) {
   const node = S.nodes.find(n => n.id === nodeId);
   if (!node) return;
   node.actionAmount = Math.max(1, Math.min(64, (node.actionAmount || 1) + delta));
   renderNodes();
   buildPanel();
+  saveHist();
 }
 
 // Veelgebruikte Minecraft items voor autocomplete
@@ -2667,47 +2912,95 @@ function showPreview() {
 }
 
 function renderPreview() {
-  const el = document.getElementById('preview-content');
-  const node = S.nodes.find(n=>n.id===previewState.nodeId);
-  if (!node) { el.innerHTML='<p style="color:var(--text3)">Einde van het gesprek.</p>'; return; }
+  var el = document.getElementById('preview-content');
+  var node = S.nodes.find(function(n){return n.id===previewState.nodeId;});
+  if (!node) { el.innerHTML='<p style="color:var(--text3)">'+t('prev_end')+'</p>'; return; }
 
-  const c = NODE_COLORS[node.type];
-  const npc = S.npcs.find(n=>n.id===node.npc);
-  const lang = previewState.lang;
+  var c    = NODE_COLORS[node.type] || NODE_COLORS.dialog;
+  var npc  = S.npcs.find(function(n){return n.id===node.npc;});
+  var lang = previewState.lang;
 
-  let html = `
-    <div style="display:flex;gap:8px;margin-bottom:12px">
-      ${S.langs.map(l=>`<button onclick="previewState.lang='${l}';renderPreview()" style="padding:3px 8px;border-radius:10px;border:1px solid ${l===lang?'var(--accent)':'var(--border)'};background:${l===lang?'var(--accent-dim)':'transparent'};color:${l===lang?'var(--accent)':'var(--text3)'};cursor:pointer;font-size:11px;font-weight:600">${l}</button>`).join('')}
-    </div>`;
+  // Lang switcher
+  var langBtns = S.langs.map(function(l){
+    var active = l===lang;
+    return '<button onclick="previewState.lang=\''+l+'\';renderPreview()" style="padding:3px 8px;border-radius:10px;border:1px solid '+(active?'var(--accent)':'var(--border)')+';background:'+(active?'var(--accent-dim)':'transparent')+';color:'+(active?'var(--accent)':'var(--text3)')+';cursor:pointer;font-size:11px;font-weight:600">'+l+'</button>';
+  }).join('');
+  var html = '<div style="display:flex;gap:8px;margin-bottom:12px">'+langBtns+'</div>';
+
+  var npcHeader = npc ? '<div style="font-size:11px;font-weight:600;color:'+c.accent+';margin-bottom:5px">'+npc.name+'</div>' : '';
+
+  var nextBtn = function(toId, label) {
+    return '<button onclick="previewState.nodeId=\''+toId+'\';renderPreview()" style="display:block;width:100%;padding:8px 12px;margin-bottom:6px;border-radius:6px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);cursor:pointer;text-align:left;font-size:12px">'+label+'</button>';
+  };
 
   if (node.type==='end') {
-    html += `<div style="text-align:center;padding:24px;color:var(--text3)">
-      ${npc?`<div style="font-size:12px;color:var(--text2);margin-bottom:8px">${npc.name}</div>`:''}
-      <div style="font-size:14px;font-style:italic;color:var(--text);margin-bottom:16px">"${node.text?.[lang]||''}"</div>
-      <div style="font-size:11px;color:var(--text3)">${t('prev_end')}</div>
-    </div>`;
+    html += '<div style="text-align:center;padding:24px;color:var(--text3)">'
+          + npcHeader
+          + '<div style="font-size:14px;font-style:italic;color:var(--text);margin-bottom:16px">"'+(node.text&&node.text[lang] ? node.text[lang] : '')+'"</div>'
+          + '<div style="font-size:11px;color:var(--text3)">'+t('prev_end')+'</div>'
+          + '</div>';
+
   } else if (node.type==='dialog') {
-    const conns = S.conns.filter(c=>c.from===node.id);
-    html += `
-      <div style="background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:12px">
-        ${npc?`<div style="font-size:11px;font-weight:600;color:${c.accent};margin-bottom:5px">${npc.name}</div>`:''}
-        <div style="font-size:13px;line-height:1.6">${node.text?.[lang]||'...'}</div>
-      </div>
-      ${conns.length ? conns.map(conn=>`<button onclick="previewState.nodeId='${conn.to}';renderPreview()" style="display:block;width:100%;padding:8px 12px;margin-bottom:6px;border-radius:6px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);cursor:pointer;text-align:left;font-size:12px">${t('prev_next')}</button>`).join('') : `<p style="color:var(--text3);font-size:12px;text-align:center">${t('prev_no_conn')}</p>`}`;
+    var conns = S.conns.filter(function(c){return c.from===node.id;});
+    html += '<div style="background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:12px">'
+          + npcHeader
+          + '<div style="font-size:13px;line-height:1.6">'+(node.text&&node.text[lang] ? node.text[lang] : '...')+'</div>'
+          + '</div>';
+    if (conns.length) {
+      conns.forEach(function(conn){ html += nextBtn(conn.to, t('prev_next')); });
+    } else {
+      html += '<p style="color:var(--text3);font-size:12px;text-align:center">'+t('prev_no_conn')+'</p>';
+    }
+
   } else if (node.type==='choice') {
-    html += `
-      <div style="background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:12px">
-        ${npc?`<div style="font-size:11px;font-weight:600;color:${c.accent};margin-bottom:5px">${npc.name}</div>`:''}
-        <div style="font-size:13px;line-height:1.6">${node.text?.[lang]||'...'}</div>
-      </div>
-      ${(node.choices||[]).map((ch,i)=>{
-        const conn = S.conns.find(c=>c.from===node.id&&c.fp===`out${i}`);
-        return `<button onclick="${conn?`previewState.nodeId='${conn.to}';renderPreview()`:`alert('${t('no_choice_conn')}')`}" style="display:block;width:100%;padding:8px 12px;margin-bottom:6px;border-radius:6px;border:1px solid ${CHOICE_COLORS[i%6]}40;background:${CHOICE_COLORS[i%6]}18;color:${CHOICE_COLORS[i%6]};cursor:pointer;text-align:left;font-size:12px">${ch.label?.[lang]||`${t('opt_prefix')}${i+1}`}</button>`;
-      }).join('')}`;
+    html += '<div style="background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:12px">'
+          + npcHeader
+          + '<div style="font-size:13px;line-height:1.6">'+(node.text&&node.text[lang] ? node.text[lang] : '...')+'</div>'
+          + '</div>';
+    (node.choices||[]).forEach(function(ch,i){
+      var conn  = S.conns.find(function(c){return c.from===node.id&&c.fp==='out'+i;});
+      var label = (ch.label&&ch.label[lang]) ? ch.label[lang] : t('opt_prefix')+(i+1);
+      var col   = CHOICE_COLORS[i%6];
+      if (conn) {
+        html += '<button onclick="previewState.nodeId=\''+conn.to+'\';renderPreview()" style="display:block;width:100%;padding:8px 12px;margin-bottom:6px;border-radius:6px;border:1px solid '+col+'40;background:'+col+'18;color:'+col+';cursor:pointer;text-align:left;font-size:12px">'+label+'</button>';
+      } else {
+        html += '<button style="display:block;width:100%;padding:8px 12px;margin-bottom:6px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text3);cursor:not-allowed;text-align:left;font-size:12px;opacity:.5">'+label+' — '+t('prev_no_conn')+'</button>';
+      }
+    });
+
+  } else if (node.type==='condition') {
+    // Show condition and let user pick true/false path
+    var varTxt = node.variable||'var'; var op = node.operator||'=='; var val = node.value||'';
+    var trueConn  = S.conns.find(function(c){return c.from===node.id&&c.fp==='out-true';});
+    var falseConn = S.conns.find(function(c){return c.from===node.id&&c.fp==='out-false';});
+    html += '<div style="background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:12px">'
+          + '<div style="font-size:10px;font-weight:700;color:var(--amber);margin-bottom:8px">CONDITIE</div>'
+          + '<div style="font-family:monospace;font-size:13px;color:var(--text)">'+varTxt+' <span style="color:var(--text2)">'+op+'</span> "'+val+'"</div>'
+          + '</div>'
+          + '<div style="display:flex;gap:8px">'
+          + (trueConn  ? '<button onclick="previewState.nodeId=\''+trueConn.to+'\';renderPreview()" style="flex:1;padding:8px;border-radius:6px;border:1px solid #14532d;background:#0f2e18;color:#4ade80;cursor:pointer;font-size:12px;font-weight:600">\u2713 Waar</button>' : '<button style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text3);cursor:not-allowed;font-size:12px;opacity:.4">\u2713 Waar</button>')
+          + (falseConn ? '<button onclick="previewState.nodeId=\''+falseConn.to+'\';renderPreview()" style="flex:1;padding:8px;border-radius:6px;border:1px solid #450a0a;background:#2a0808;color:#f87171;cursor:pointer;font-size:12px;font-weight:600">\u2717 Onwaar</button>' : '<button style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text3);cursor:not-allowed;font-size:12px;opacity:.4">\u2717 Onwaar</button>')
+          + '</div>';
+
+  } else if (node.type==='gate') {
+    // Show gate type and auto-follow first connected output
+    var gt = node.gateType || 'AND';
+    var trueConn  = S.conns.find(function(c){return c.from===node.id&&c.fp==='out-true';});
+    var falseConn = S.conns.find(function(c){return c.from===node.id&&c.fp==='out-false';});
+    html += '<div style="background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:12px">'
+          + '<div style="font-size:10px;font-weight:700;color:#818cf8;margin-bottom:8px">'+gt+' GATE</div>'
+          + '<div style="font-size:12px;color:var(--text2)">Kies handmatig welk pad je wilt testen:</div>'
+          + '</div>'
+          + '<div style="display:flex;gap:8px">'
+          + (trueConn  ? '<button onclick="previewState.nodeId=\''+trueConn.to+'\';renderPreview()" style="flex:1;padding:8px;border-radius:6px;border:1px solid #14532d;background:#0f2e18;color:#4ade80;cursor:pointer;font-size:12px;font-weight:600">\u2713 true pad</button>' : '<button style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text3);opacity:.4;font-size:12px">\u2713 Niet verbonden</button>')
+          + (falseConn ? '<button onclick="previewState.nodeId=\''+falseConn.to+'\';renderPreview()" style="flex:1;padding:8px;border-radius:6px;border:1px solid #450a0a;background:#2a0808;color:#f87171;cursor:pointer;font-size:12px;font-weight:600">\u2717 false pad</button>' : '<button style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text3);opacity:.4;font-size:12px">\u2717 Niet verbonden</button>')
+          + '</div>';
+
   } else {
-    const conn = S.conns.find(c=>c.from===node.id);
-    html += `<div style="padding:12px;background:var(--bg3);border-radius:8px;margin-bottom:12px;font-size:12px;color:var(--text2)">[${c.label} ${t('prev_auto')}]</div>
-      ${conn?`<button onclick="previewState.nodeId='${conn.to}';renderPreview()" style="display:block;width:100%;padding:8px 12px;border-radius:6px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);cursor:pointer;font-size:12px">${t('prev_next')}</button>`:''}`;
+    // Action, Jump — auto-advance
+    var conn = S.conns.find(function(c){return c.from===node.id;});
+    html += '<div style="padding:12px;background:var(--bg3);border-radius:8px;margin-bottom:12px;font-size:12px;color:var(--text2)">['+c.label+' — '+t('prev_auto')+']</div>';
+    if (conn) { html += nextBtn(conn.to, t('prev_next')); }
   }
 
   el.innerHTML = html;
@@ -2715,6 +3008,33 @@ function renderPreview() {
 
 function closePreview() {
   document.getElementById('preview-modal').style.display='none';
+}
+
+// ─── CANVAS LEEGMAKEN ────────────────────────────────────────────────────────
+function clearCanvas() {
+  if (S.nodes.length === 0) { showToast('Canvas is al leeg', 'amber'); return; }
+  _loopCallback = function() {
+    S.nodes = []; S.conns = []; S.selected = null; S.nodeLangTab = {};
+    document.querySelectorAll('.conn-delete-btn').forEach(function(b){b.remove();});
+    renderAll(); buildPanel(); updateHint(); saveHist();
+    showToast('✓ Canvas leeggemaakt — Ctrl+Z om terug te halen', 'accent');
+  };
+  clearTimeout(_toastTimer);
+  var toast   = document.getElementById('loop-toast');
+  var btnRow  = toast.querySelector('div:last-child');
+  var input   = document.getElementById('loop-toast-input');
+  document.getElementById('loop-toast-title').textContent = '🗑️ Canvas leegmaken?';
+  document.getElementById('loop-toast-body').textContent  = 'Alle ' + S.nodes.length + ' nodes en verbindingen worden verwijderd.';
+  document.getElementById('loop-btn-cancel').textContent  = t('exp_cancel');
+  document.getElementById('loop-btn-ok').textContent      = '🗑️ Leegmaken';
+  if (input) input.style.display = 'none';
+  btnRow.style.display = 'flex';
+  document.getElementById('loop-btn-ok').style.cssText    = 'padding:4px 14px;border-radius:6px;border:1px solid var(--red);background:var(--red);color:#fff;font-size:11px;font-weight:600;cursor:pointer';
+  document.getElementById('loop-btn-cancel').style.cssText = 'padding:4px 14px;border-radius:6px;border:1px solid var(--border2);background:transparent;color:var(--text2);font-size:11px;cursor:pointer';
+  toast.style.background  = 'var(--bg2)';
+  toast.style.borderColor = 'var(--red)';
+  toast.style.color       = 'var(--text)';
+  toast.style.display     = 'block';
 }
 
 // ─── MISC ────────────────────────────────────────────────────────────────────
@@ -3250,7 +3570,7 @@ const UI_LANGS = {
     nt_action: 'Actie', nt_jump: 'Sprong', nt_end: 'Einde',
     nd_dialog: 'NPC zegt iets', nd_choice: 'Speler kiest een optie',
     nd_condition: 'If / else logica', nd_action: 'Geef item / speel geluid',
-    nd_jump: 'Ga naar andere node', nd_end: 'Gesprek eindigt',
+    nd_jump: 'Ga naar andere node', nd_end: 'Gesprek eindigt', nt_gate: 'Gate', nd_gate: 'AND / OR logica',
     // Rechter paneel
     rp_title: 'Eigenschappen', rp_empty: 'Klik op een node\nom te bewerken',
     rp_edit_lang: 'Taal bewerken', rp_text: 'Tekst', rp_npc: 'NPC',
@@ -3288,7 +3608,7 @@ const UI_LANGS = {
     // Canvas
     canvas_hint: 'Sleep een element van de sidebar naar het canvas om te beginnen',
     // Misc
-    delete_conn: 'Verbinding verwijderen?', delete_conn_done: '✓ Verbinding verwijderd — Ctrl+Z om ongedaan te maken',
+    delete_conn: 'Verbinding verwijderen?', node_warn_25: '⚠ 25 nodes — grote projecten kunnen trager worden', node_warn_50: '⚠ 50 nodes — overweeg het project op te splitsen', delete_conn_done: '✓ Verbinding verwijderd — Ctrl+Z om ongedaan te maken',
     rename_prompt: 'Projectnaam:', rename_hint: '↵ opslaan · Esc annuleer', rename_title: 'Klik om te hernoemen',
     npc_name_prompt: 'Naam van de NPC:', npc_edit_prompt: 'Nieuwe naam:', npc_delete_confirm: 'verwijderen?', npc_delete_used: 'wordt gebruikt in', npc_delete_nodes: 'node(s). Die nodes krijgen geen NPC meer.', npc_filter_tip: 'Klik om te filteren',
     no_choice_conn: 'Geen node verbonden',
@@ -3319,7 +3639,7 @@ const UI_LANGS = {
     nt_action: 'Action', nt_jump: 'Jump', nt_end: 'End',
     nd_dialog: 'NPC says something', nd_choice: 'Player picks an option',
     nd_condition: 'If / else logic', nd_action: 'Give item / play sound',
-    nd_jump: 'Go to another node', nd_end: 'Conversation ends',
+    nd_jump: 'Go to another node', nd_end: 'Conversation ends', nt_gate: 'Gate', nd_gate: 'AND / OR logic',
     rp_title: 'Properties', rp_empty: 'Click a node\nto edit it',
     rp_edit_lang: 'Edit language', rp_text: 'Text', rp_npc: 'NPC',
     rp_question: 'Question for player', rp_choices: 'Choice options',
@@ -3350,7 +3670,7 @@ const UI_LANGS = {
     prev_auto: 'node — continues automatically',
     prev_no_start: 'No start node found. Make sure there is a node without an incoming connection.',
     canvas_hint: 'Drag an element from the sidebar to the canvas to get started',
-    delete_conn: 'Delete connection?', delete_conn_done: '✓ Connection deleted — Ctrl+Z to undo',
+    delete_conn: 'Delete connection?', node_warn_25: '⚠ 25 nodes — large projects may slow down', node_warn_50: '⚠ 50 nodes — consider splitting the project', delete_conn_done: '✓ Connection deleted — Ctrl+Z to undo',
     rename_prompt: 'Project name:', rename_hint: '↵ save · Esc cancel', rename_title: 'Click to rename',
     npc_name_prompt: 'Name of the NPC:', npc_edit_prompt: 'New name:', npc_delete_confirm: 'delete?', npc_delete_used: 'is used in', npc_delete_nodes: 'node(s). Those nodes will have no NPC.', npc_filter_tip: 'Click to filter',
     no_choice_conn: 'No node connected',
@@ -3381,7 +3701,7 @@ const UI_LANGS = {
     nt_action: 'Aktion', nt_jump: 'Sprung', nt_end: 'Ende',
     nd_dialog: 'NPC sagt etwas', nd_choice: 'Spieler wählt eine Option',
     nd_condition: 'If / else Logik', nd_action: 'Item geben / Ton abspielen',
-    nd_jump: 'Zu anderem Node gehen', nd_end: 'Gespräch endet',
+    nd_jump: 'Zu anderem Node gehen', nd_end: 'Gespräch endet', nt_gate: 'Gate', nd_gate: 'AND / OR Logik',
     rp_title: 'Eigenschaften', rp_empty: 'Node anklicken\num zu bearbeiten',
     rp_edit_lang: 'Sprache bearbeiten', rp_text: 'Text', rp_npc: 'NPC',
     rp_question: 'Frage an Spieler', rp_choices: 'Auswahloptionen',
@@ -3412,7 +3732,7 @@ const UI_LANGS = {
     prev_auto: 'Node — läuft automatisch weiter',
     prev_no_start: 'Kein Startnode gefunden. Stelle sicher, dass ein Node ohne eingehende Verbindung vorhanden ist.',
     canvas_hint: 'Ziehe ein Element aus der Seitenleiste auf das Canvas',
-    delete_conn: 'Verbindung löschen?', delete_conn_done: '✓ Verbindung gelöscht — Ctrl+Z zum Rückgängigmachen',
+    delete_conn: 'Verbindung löschen?', node_warn_25: '⚠ 25 Nodes — große Projekte können langsamer werden', node_warn_50: '⚠ 50 Nodes — erwäge das Projekt aufzuteilen', delete_conn_done: '✓ Verbindung gelöscht — Ctrl+Z zum Rückgängigmachen',
     rename_prompt: 'Projektname:', rename_hint: '↵ speichern · Esc abbrechen', rename_title: 'Klicken zum Umbenennen',
     npc_name_prompt: 'Name des NPCs:', npc_edit_prompt: 'Neuer Name:', npc_delete_confirm: 'löschen?', npc_delete_used: 'wird verwendet in', npc_delete_nodes: 'Node(s). Diese Nodes haben keinen NPC mehr.', npc_filter_tip: 'Klicken zum Filtern',
     no_choice_conn: 'Kein Node verbunden',
@@ -3443,7 +3763,7 @@ const UI_LANGS = {
     nt_action: 'Action', nt_jump: 'Saut', nt_end: 'Fin',
     nd_dialog: 'Le PNJ dit quelque chose', nd_choice: 'Le joueur choisit',
     nd_condition: 'Logique if / else', nd_action: 'Donner objet / jouer son',
-    nd_jump: 'Aller à un autre nœud', nd_end: 'Fin de conversation',
+    nd_jump: 'Aller à un autre nœud', nd_end: 'Fin de conversation', nt_gate: 'Gate', nd_gate: 'Logique AND / OR',
     rp_title: 'Propriétés', rp_empty: 'Cliquez sur un nœud\npour le modifier',
     rp_edit_lang: 'Modifier la langue', rp_text: 'Texte', rp_npc: 'PNJ',
     rp_question: 'Question au joueur', rp_choices: 'Options de choix',
@@ -3474,7 +3794,7 @@ const UI_LANGS = {
     prev_auto: 'nœud — continue automatiquement',
     prev_no_start: 'Aucun nœud de départ trouvé. Assurez-vous qu\'un nœud n\'a pas de connexion entrante.',
     canvas_hint: 'Glissez un élément de la barre latérale vers le canvas pour commencer',
-    delete_conn: 'Supprimer la connexion ?', delete_conn_done: '✓ Connexion supprimée — Ctrl+Z pour annuler',
+    delete_conn: 'Supprimer la connexion ?', node_warn_25: '⚠ 25 nœuds — les grands projets peuvent ralentir', node_warn_50: '⚠ 50 nœuds — envisagez de diviser le projet', delete_conn_done: '✓ Connexion supprimée — Ctrl+Z pour annuler',
     rename_prompt: 'Nom du projet :', rename_hint: '↵ enregistrer · Échap annuler', rename_title: 'Cliquer pour renommer',
     npc_name_prompt: 'Nom du PNJ :', npc_edit_prompt: 'Nouveau nom :', npc_delete_confirm: 'supprimer ?', npc_delete_used: 'est utilisé dans', npc_delete_nodes: "nœud(s). Ces nœuds n'auront plus de PNJ.", npc_filter_tip: 'Cliquer pour filtrer',
     no_choice_conn: 'Aucun nœud connecté',
@@ -3499,7 +3819,7 @@ const UI_LANGS = {
     sb_add_npc: '+ Lägg till NPC', lang_placeholder: 't.ex. DE, FR…', lang_add: '+ Lägg till',
     nt_dialog: 'Dialog', nt_choice: 'Val', nt_condition: 'Villkor', nt_action: 'Åtgärd', nt_jump: 'Hopp', nt_end: 'Slut',
     nd_dialog: 'NPC säger något', nd_choice: 'Spelaren väljer', nd_condition: 'If / else logik',
-    nd_action: 'Ge föremål / spela ljud', nd_jump: 'Gå till annan nod', nd_end: 'Konversation slutar',
+    nd_action: 'Ge föremål / spela ljud', nd_jump: 'Gå till annan nod', nd_end: 'Konversation slutar', nt_gate: 'Gate', nd_gate: 'AND / OR-logik',
     rp_title: 'Egenskaper', rp_empty: 'Klicka på en nod\nför att redigera',
     rp_edit_lang: 'Redigera språk', rp_text: 'Text', rp_npc: 'NPC',
     rp_question: 'Fråga till spelaren', rp_choices: 'Svarsalternativ',
@@ -3521,7 +3841,7 @@ const UI_LANGS = {
     prev_no_conn: 'Ingen nästa nod ansluten.', prev_auto: 'nod — fortsätter automatiskt',
     prev_no_start: 'Ingen startnod hittades. Se till att det finns en nod utan inkommande anslutning.',
     canvas_hint: 'Dra ett element från sidofältet till canvas för att börja',
-    delete_conn: 'Ta bort anslutning?', delete_conn_done: '✓ Anslutning borttagen — Ctrl+Z för att ångra', rename_prompt: 'Projektnamn:', rename_hint: '↵ spara · Esc avbryt', rename_title: 'Klicka för att byta namn', npc_name_prompt: 'NPC-namn:', npc_edit_prompt: 'Nytt namn:', npc_delete_confirm: 'ta bort?', npc_delete_used: 'används i', npc_delete_nodes: 'nod(er). De noderna får ingen NPC.', npc_filter_tip: 'Klicka för att filtrera',
+    delete_conn: 'Ta bort anslutning?', node_warn_25: '⚠ 25 noder — stora projekt kan bli långsammare', node_warn_50: '⚠ 50 noder — överväg att dela upp projektet', delete_conn_done: '✓ Anslutning borttagen — Ctrl+Z för att ångra', rename_prompt: 'Projektnamn:', rename_hint: '↵ spara · Esc avbryt', rename_title: 'Klicka för att byta namn', npc_name_prompt: 'NPC-namn:', npc_edit_prompt: 'Nytt namn:', npc_delete_confirm: 'ta bort?', npc_delete_used: 'används i', npc_delete_nodes: 'nod(er). De noderna får ingen NPC.', npc_filter_tip: 'Klicka för att filtrera',
     no_choice_conn: 'Ingen nod ansluten', opt_prefix: 'Alternativ ',
     tt_dialog: '💬 Dialog\nNPC:en säger något till spelaren.\nDra till canvas för att lägga till.',
     tt_choice: '🔀 Valmeny\nSpelaren får flera alternativ.\nVarje alternativ kan leda\ntill en annan nod.',
@@ -3543,7 +3863,7 @@ const UI_LANGS = {
     sb_add_npc: '+ Legg til NPC', lang_placeholder: 'f.eks. DE, FR…', lang_add: '+ Legg til',
     nt_dialog: 'Dialog', nt_choice: 'Valg', nt_condition: 'Betingelse', nt_action: 'Handling', nt_jump: 'Hopp', nt_end: 'Slutt',
     nd_dialog: 'NPC sier noe', nd_choice: 'Spilleren velger', nd_condition: 'If / else logikk',
-    nd_action: 'Gi gjenstand / spill lyd', nd_jump: 'Gå til annen node', nd_end: 'Samtale avsluttes',
+    nd_action: 'Gi gjenstand / spill lyd', nd_jump: 'Gå til annen node', nd_end: 'Samtale avsluttes', nt_gate: 'Gate', nd_gate: 'AND / OR-logikk',
     rp_title: 'Egenskaper', rp_empty: 'Klikk på en node\nfor å redigere',
     rp_edit_lang: 'Rediger språk', rp_text: 'Tekst', rp_npc: 'NPC',
     rp_question: 'Spørsmål til spilleren', rp_choices: 'Svaralternativer',
@@ -3565,7 +3885,7 @@ const UI_LANGS = {
     prev_no_conn: 'Ingen neste node tilkoblet.', prev_auto: 'node — fortsetter automatisk',
     prev_no_start: 'Ingen startnode funnet. Sørg for at det finnes en node uten innkommende tilkobling.',
     canvas_hint: 'Dra et element fra sidefeltet til canvas for å starte',
-    delete_conn: 'Slett tilkobling?', delete_conn_done: '✓ Tilkobling slettet — Ctrl+Z for å angre', rename_prompt: 'Prosjektnavn:', rename_hint: '↵ lagre · Esc avbryt', rename_title: 'Klikk for å gi nytt navn', npc_name_prompt: 'NPC-navn:', npc_edit_prompt: 'Nytt navn:', npc_delete_confirm: 'slette?', npc_delete_used: 'brukes i', npc_delete_nodes: 'node(r). Disse nodene får ingen NPC.', npc_filter_tip: 'Klikk for å filtrere',
+    delete_conn: 'Slett tilkobling?', node_warn_25: '⚠ 25 noder — store prosjekter kan bli tregere', node_warn_50: '⚠ 50 noder — vurder å dele opp prosjektet', delete_conn_done: '✓ Tilkobling slettet — Ctrl+Z for å angre', rename_prompt: 'Prosjektnavn:', rename_hint: '↵ lagre · Esc avbryt', rename_title: 'Klikk for å gi nytt navn', npc_name_prompt: 'NPC-navn:', npc_edit_prompt: 'Nytt navn:', npc_delete_confirm: 'slette?', npc_delete_used: 'brukes i', npc_delete_nodes: 'node(r). Disse nodene får ingen NPC.', npc_filter_tip: 'Klikk for å filtrere',
     no_choice_conn: 'Ingen node tilkoblet', opt_prefix: 'Alternativ ',
     tt_dialog: '💬 Dialog\nNPC-en sier noe til spilleren.\nDra til canvas for å legge til.',
     tt_choice: '🔀 Valgmeny\nSpilleren får flere alternativer.\nHvert alternativ kan føre\ntil en annen node.',
@@ -3587,7 +3907,7 @@ const UI_LANGS = {
     sb_add_npc: '+ Tilføj NPC', lang_placeholder: 'f.eks. DE, FR…', lang_add: '+ Tilføj',
     nt_dialog: 'Dialog', nt_choice: 'Valg', nt_condition: 'Betingelse', nt_action: 'Handling', nt_jump: 'Spring', nt_end: 'Slut',
     nd_dialog: 'NPC siger noget', nd_choice: 'Spilleren vælger', nd_condition: 'If / else logik',
-    nd_action: 'Giv genstand / spil lyd', nd_jump: 'Gå til anden node', nd_end: 'Samtale afsluttes',
+    nd_action: 'Giv genstand / spil lyd', nd_jump: 'Gå til anden node', nd_end: 'Samtale afsluttes', nt_gate: 'Gate', nd_gate: 'AND / OR-logik',
     rp_title: 'Egenskaber', rp_empty: 'Klik på en node\nfor at redigere',
     rp_edit_lang: 'Rediger sprog', rp_text: 'Tekst', rp_npc: 'NPC',
     rp_question: 'Spørgsmål til spilleren', rp_choices: 'Svarmuligheder',
@@ -3609,7 +3929,7 @@ const UI_LANGS = {
     prev_no_conn: 'Ingen næste node tilsluttet.', prev_auto: 'node — fortsætter automatisk',
     prev_no_start: 'Ingen startnode fundet. Sørg for at der er en node uden indgående forbindelse.',
     canvas_hint: 'Træk et element fra sidebjælken til canvas for at begynde',
-    delete_conn: 'Slet forbindelse?', delete_conn_done: '✓ Forbindelse slettet — Ctrl+Z for at fortryde', rename_prompt: 'Projektnavn:', rename_hint: '↵ gem · Esc annullér', rename_title: 'Klik for at omdøbe', npc_name_prompt: 'NPC-navn:', npc_edit_prompt: 'Nyt navn:', npc_delete_confirm: 'slette?', npc_delete_used: 'bruges i', npc_delete_nodes: 'node(r). Disse noder får ingen NPC.', npc_filter_tip: 'Klik for at filtrere',
+    delete_conn: 'Slet forbindelse?', node_warn_25: '⚠ 25 noder — store projekter kan blive langsommere', node_warn_50: '⚠ 50 noder — overvej at opdele projektet', delete_conn_done: '✓ Forbindelse slettet — Ctrl+Z for at fortryde', rename_prompt: 'Projektnavn:', rename_hint: '↵ gem · Esc annullér', rename_title: 'Klik for at omdøbe', npc_name_prompt: 'NPC-navn:', npc_edit_prompt: 'Nyt navn:', npc_delete_confirm: 'slette?', npc_delete_used: 'bruges i', npc_delete_nodes: 'node(r). Disse noder får ingen NPC.', npc_filter_tip: 'Klik for at filtrere',
     no_choice_conn: 'Ingen node tilsluttet', opt_prefix: 'Valgmulighed ',
     tt_dialog: '💬 Dialog\nNPC\'en siger noget til spilleren.\nTræk til canvas for at tilføje.',
     tt_choice: '🔀 Valgmenu\nSpilleren får flere muligheder.\nHver mulighed kan føre\ntil en anden node.',
@@ -3631,7 +3951,7 @@ const UI_LANGS = {
     sb_add_npc: '+ Lisää NPC', lang_placeholder: 'esim. DE, FR…', lang_add: '+ Lisää',
     nt_dialog: 'Dialogi', nt_choice: 'Valinta', nt_condition: 'Ehto', nt_action: 'Toiminto', nt_jump: 'Hyppy', nt_end: 'Loppu',
     nd_dialog: 'NPC sanoo jotain', nd_choice: 'Pelaaja valitsee', nd_condition: 'If / else logiikka',
-    nd_action: 'Anna esine / toista ääni', nd_jump: 'Siirry toiseen solmuun', nd_end: 'Keskustelu päättyy',
+    nd_action: 'Anna esine / toista ääni', nd_jump: 'Siirry toiseen solmuun', nd_end: 'Keskustelu päättyy', nt_gate: 'Gate', nd_gate: 'AND / OR-logiikka',
     rp_title: 'Ominaisuudet', rp_empty: 'Napsauta solmua\nmuokataksesi',
     rp_edit_lang: 'Muokkaa kieltä', rp_text: 'Teksti', rp_npc: 'NPC',
     rp_question: 'Kysymys pelaajalle', rp_choices: 'Vastausvaihtoehdot',
@@ -3653,7 +3973,7 @@ const UI_LANGS = {
     prev_no_conn: 'Seuraavaa solmua ei ole yhdistetty.', prev_auto: 'solmu — jatkuu automaattisesti',
     prev_no_start: 'Aloitussolmua ei löydy. Varmista, että on solmu ilman saapuvia yhteyksiä.',
     canvas_hint: 'Vedä elementti sivupalkista canvasille aloittaaksesi',
-    delete_conn: 'Poista yhteys?', delete_conn_done: '✓ Yhteys poistettu — Ctrl+Z kumotaksesi', rename_prompt: 'Projektin nimi:', rename_hint: '↵ tallenna · Esc peruuta', rename_title: 'Napsauta nimetäksesi uudelleen', npc_name_prompt: 'NPC:n nimi:', npc_edit_prompt: 'Uusi nimi:', npc_delete_confirm: 'poistaa?', npc_delete_used: 'käytetään', npc_delete_nodes: 'solmussa. Näillä solmuilla ei ole enää NPC:tä.', npc_filter_tip: 'Napsauta suodattaaksesi',
+    delete_conn: 'Poista yhteys?', node_warn_25: '⚠ 25 solmua — suuret projektit voivat hidastua', node_warn_50: '⚠ 50 solmua — harkitse projektin jakamista', delete_conn_done: '✓ Yhteys poistettu — Ctrl+Z kumotaksesi', rename_prompt: 'Projektin nimi:', rename_hint: '↵ tallenna · Esc peruuta', rename_title: 'Napsauta nimetäksesi uudelleen', npc_name_prompt: 'NPC:n nimi:', npc_edit_prompt: 'Uusi nimi:', npc_delete_confirm: 'poistaa?', npc_delete_used: 'käytetään', npc_delete_nodes: 'solmussa. Näillä solmuilla ei ole enää NPC:tä.', npc_filter_tip: 'Napsauta suodattaaksesi',
     no_choice_conn: 'Ei yhdistettyä solmua', opt_prefix: 'Vaihtoehto ',
     tt_dialog: '💬 Dialogi\nNPC sanoo jotain pelaajalle.\nVedä canvasille lisätäksesi.',
     tt_choice: '🔀 Valintavalikko\nPelaaja saa useita vaihtoehtoja.\nJokainen vaihtoehto voi johtaa\neri solmuun.',
@@ -3675,7 +3995,7 @@ const UI_LANGS = {
     sb_add_npc: '+ Bæta við NPC', lang_placeholder: 't.d. DE, FR…', lang_add: '+ Bæta við',
     nt_dialog: 'Samtal', nt_choice: 'Val', nt_condition: 'Skilyrði', nt_action: 'Aðgerð', nt_jump: 'Stökk', nt_end: 'Lok',
     nd_dialog: 'NPC segir eitthvað', nd_choice: 'Leikmaður velur', nd_condition: 'If / else rök',
-    nd_action: 'Gefðu hlut / spilaðu hljóð', nd_jump: 'Fara í aðra hnút', nd_end: 'Samtal lýkur',
+    nd_action: 'Gefðu hlut / spilaðu hljóð', nd_jump: 'Fara í aðra hnút', nd_end: 'Samtal lýkur', nt_gate: 'Gate', nd_gate: 'AND / OR rök',
     rp_title: 'Eiginleikar', rp_empty: 'Smelltu á hnút\ntil að breyta',
     rp_edit_lang: 'Breyta tungumáli', rp_text: 'Texti', rp_npc: 'NPC',
     rp_question: 'Spurning til leikmanns', rp_choices: 'Svarmöguleikar',
@@ -3697,7 +4017,7 @@ const UI_LANGS = {
     prev_no_conn: 'Engin næsta hnútur tengdur.', prev_auto: 'hnútur — heldur áfram sjálfkrafa',
     prev_no_start: 'Engin upphafsnóða fannst. Gakktu úr skugga um að ein hnútur sé án innlægra tenginga.',
     canvas_hint: 'Dragðu einingu úr hliðarstikunni á canvas til að byrja',
-    delete_conn: 'Eyða tengingu?', delete_conn_done: '✓ Tenging eyðilögð — Ctrl+Z til að afturkalla', rename_prompt: 'Heiti verkefnis:', rename_hint: '↵ vista · Esc hætta við', rename_title: 'Smelltu til að endurnefna', npc_name_prompt: 'Nafn NPC:', npc_edit_prompt: 'Nýtt nafn:', npc_delete_confirm: 'eyða?', npc_delete_used: 'er notað í', npc_delete_nodes: 'hnút(a). Þessir hnútar munu ekki hafa NPC.', npc_filter_tip: 'Smelltu til að sía',
+    delete_conn: 'Eyða tengingu?', node_warn_25: '⚠ 25 hnútar — stór verkefni geta hægst', node_warn_50: '⚠ 50 hnútar — íhugaðu að skipta verkefninu', delete_conn_done: '✓ Tenging eyðilögð — Ctrl+Z til að afturkalla', rename_prompt: 'Heiti verkefnis:', rename_hint: '↵ vista · Esc hætta við', rename_title: 'Smelltu til að endurnefna', npc_name_prompt: 'Nafn NPC:', npc_edit_prompt: 'Nýtt nafn:', npc_delete_confirm: 'eyða?', npc_delete_used: 'er notað í', npc_delete_nodes: 'hnút(a). Þessir hnútar munu ekki hafa NPC.', npc_filter_tip: 'Smelltu til að sía',
     no_choice_conn: 'Engin hnútur tengdur', opt_prefix: 'Valmöguleiki ',
     tt_dialog: '💬 Samtal\nNPC-inn segir eitthvað við leikmann.\nDragðu á canvas til að bæta við.',
     tt_choice: '🔀 Valvalmynd\nLeikmaður fær nokkra möguleika.\nHverjum möguleika getur leitt\ntil annarrar hnútar.',
@@ -3727,6 +4047,13 @@ function setUILang(lang) {
 function applyUILang() {
   // Topbar buttons
   document.getElementById('btn-export').textContent  = t('export_btn');
+  // Node warning banner — update text if visible
+  const nwb = document.getElementById('node-warning');
+  if (nwb && nwb.style.display !== 'none') {
+    const count = S.nodes.length;
+    const txt = count >= 50 ? t('node_warn_50') : t('node_warn_25');
+    document.getElementById('node-warning-text').textContent = txt;
+  }
   // Sidebar labels
   document.getElementById('sb-label-elements').textContent  = t('sb_elements');
   document.getElementById('sb-label-projlangs').textContent = t('sb_proj_langs');
