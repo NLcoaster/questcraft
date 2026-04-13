@@ -648,10 +648,17 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); co
           <div style="flex:1">
             <div style="display:flex;flex-direction:column;gap:6px">
               <label class="settings-radio" id="radio-libretranslate">
-                <input type="radio" name="trans-provider" value="libretranslate" onchange="setTransProvider(this.value)" checked>
+                <input type="radio" name="trans-provider" value="libretranslate" onchange="setTransProvider(this.value)">
                 <div>
-                  <div style="font-size:12px;font-weight:600;color:var(--text)">LibreTranslate <span style="font-size:10px;padding:1px 6px;border-radius:8px;background:var(--accent-dim);color:var(--accent)">Standaard · Gratis</span></div>
-                  <div style="font-size:11px;color:var(--text3);margin-top:2px">Open source, geen API key nodig. Minder nauwkeurig.</div>
+                  <div style="font-size:12px;font-weight:600;color:var(--text)">LibreTranslate <span style="font-size:10px;padding:1px 6px;border-radius:8px;background:var(--amber-dim);color:var(--amber)">Vereist eigen server</span></div>
+                  <div style="font-size:11px;color:var(--text3);margin-top:2px">Open source. Werkt alleen met een zelf-gehoste instantie.</div>
+                </div>
+              </label>
+              <label class="settings-radio" id="radio-mymemory">
+                <input type="radio" name="trans-provider" value="mymemory" onchange="setTransProvider(this.value)" checked>
+                <div>
+                  <div style="font-size:12px;font-weight:600;color:var(--text)">MyMemory <span style="font-size:10px;padding:1px 6px;border-radius:8px;background:var(--accent-dim);color:var(--accent)">Standaard · Gratis · Werkt altijd</span></div>
+                  <div style="font-size:11px;color:var(--text3);margin-top:2px">Geen API key nodig. Werkt direct vanuit de browser. Max ~5000 tekens/dag gratis.</div>
                 </div>
               </label>
               <label class="settings-radio" id="radio-anthropic">
@@ -2736,66 +2743,51 @@ function exportBedrock() {
 }
 
 function _exportBedrockActual() {
+  const projName = S.projectName.replace(/\s/g,'_').replace(/[^a-zA-Z0-9_-]/g,'') || 'project';
 
-  const projName = S.projectName.replace(/\s/g,'_').replace(/[^a-zA-Z0-9_-]/g,'');
-
-  // scenes.json — tekst via taalsleutels zodat Minecraft de taal van de client oppakt
+  // scenes.json
   const scenes = [];
-  S.nodes.forEach(node => {
+  S.nodes.forEach(function(node) {
     if (node.type==='dialog' || node.type==='end') {
-      const npc = S.npcs.find(n=>n.id===node.npc);
-      const textKey = `npc.${node.id}.text`;
+      const npc = S.npcs.find(function(n){return n.id===node.npc;});
       scenes.push({
         scene_tag: node.id,
-        npc_name: npc?.name || 'NPC',
-        text: `§l${textKey}`,   // §l = bold, Minecraft vervangt de key via .lang bestanden
-        buttons: S.conns.filter(c=>c.from===node.id).map(conn => {
-          const target = S.nodes.find(n=>n.id===conn.to);
-          return {
-            name: `npc.${node.id}.btn_next`,
-            commands: target ? [`/dialogue open @e[type=npc,tag=${projName}] @initiator ${target.id}`] : []
-          };
+        npc_name: npc ? npc.name : 'NPC',
+        text: 'npc.'+node.id+'.text',
+        buttons: S.conns.filter(function(c){return c.from===node.id;}).map(function(conn) {
+          const target = S.nodes.find(function(n){return n.id===conn.to;});
+          return { name:'npc.'+node.id+'.btn_next', commands: target ? ['/dialogue open @e[type=npc,tag='+projName+'] @initiator '+target.id] : [] };
         })
       });
     }
     if (node.type==='choice') {
-      const npc = S.npcs.find(n=>n.id===node.npc);
+      const npc = S.npcs.find(function(n){return n.id===node.npc;});
       scenes.push({
         scene_tag: node.id,
-        npc_name: npc?.name || 'NPC',
-        text: `npc.${node.id}.text`,
-        buttons: (node.choices||[]).map((ch, i) => {
-          const conn = S.conns.find(c=>c.from===node.id && c.fp===`out${i}`);
-          const target = conn ? S.nodes.find(n=>n.id===conn.to) : null;
-          return {
-            name: `npc.${node.id}.choice${i}`,
-            commands: target ? [`/dialogue open @e[type=npc,tag=${projName}] @initiator ${target.id}`] : []
-          };
+        npc_name: npc ? npc.name : 'NPC',
+        text: 'npc.'+node.id+'.text',
+        buttons: (node.choices||[]).map(function(ch, i) {
+          const conn = S.conns.find(function(c){return c.from===node.id && c.fp==='out'+i;});
+          const target = conn ? S.nodes.find(function(n){return n.id===conn.to;}) : null;
+          return { name:'npc.'+node.id+'.choice'+i, commands: target ? ['/dialogue open @e[type=npc,tag='+projName+'] @initiator '+target.id] : [] };
         })
       });
     }
   });
 
-  const scenesJSON = JSON.stringify({
-    format_version: '1.17',
-    'minecraft:npc_dialogue': { scenes }
-  }, null, 2);
+  const scenesJSON = JSON.stringify({ format_version:'1.17', 'minecraft:npc_dialogue':{ scenes:scenes } }, null, 2);
 
-  // .lang bestanden — één per taal, met de juiste Minecraft locale bestandsnaam
+  // .lang bestanden
   const langFiles = {};
-  S.langs.forEach(lang => {
+  S.langs.forEach(function(lang) {
     const locale = getLocale(lang, 'bedrock') || lang;
-    let lines = `## Gegenereerd door QuestCraft\n## Taal: ${lang} (${locale})\n\n`;
-    S.nodes.forEach(node => {
-      if (node.text?.[lang])
-        lines += `npc.${node.id}.text=${node.text[lang]}\n`;
-      if (node.type==='dialog' || node.type==='end')
-        lines += `npc.${node.id}.btn_next=Volgende\n`;
-      if (node.choices)
-        node.choices.forEach((ch, i) => {
-          if (ch.label?.[lang])
-            lines += `npc.${node.id}.choice${i}=${ch.label[lang]}\n`;
-        });
+    var lines = '## Gegenereerd door QuestCraft\n## Taal: '+lang+' ('+locale+')\n\n';
+    S.nodes.forEach(function(node) {
+      if (node.text && node.text[lang]) lines += 'npc.'+node.id+'.text='+node.text[lang]+'\n';
+      if (node.type==='dialog' || node.type==='end') lines += 'npc.'+node.id+'.btn_next=Volgende\n';
+      if (node.choices) node.choices.forEach(function(ch, i) {
+        if (ch.label && ch.label[lang]) lines += 'npc.'+node.id+'.choice'+i+'='+ch.label[lang]+'\n';
+      });
     });
     langFiles[locale] = lines;
   });
@@ -2803,40 +2795,43 @@ function _exportBedrockActual() {
   // manifest.json
   const manifest = {
     format_version: 2,
-    header: {
-      name: S.projectName,
-      description: 'NPC dialogen — gegenereerd door QuestCraft',
-      uuid: crypto.randomUUID(),
-      version: [1,0,0],
-      min_engine_version: [1,19,0]
-    },
+    header: { name: S.projectName, description: 'NPC dialogen — QuestCraft', uuid: crypto.randomUUID(), version:[1,0,0], min_engine_version:[1,19,0] },
     modules: [{ type:'data', uuid: crypto.randomUUID(), version:[1,0,0] }]
   };
 
-  // Downloaden
-  downloadFile(`${projName}_scenes.json`, scenesJSON, 'application/json');
-  Object.entries(langFiles).forEach(([locale, content]) => {
-    downloadFile(`${locale}.lang`, content, 'text/plain');
-  });
-  downloadFile('manifest.json', JSON.stringify(manifest, null, 2), 'application/json');
+  // Bouw zip met JSZip
+  const script = document.createElement('script');
+  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+  script.onload = function() {
+    const zip = new JSZip();
+    const bp  = zip.folder('behavior_pack');
+    bp.file('manifest.json', JSON.stringify(manifest, null, 2));
+    const dialogue = bp.folder('dialogue');
+    dialogue.file(projName+'_scenes.json', scenesJSON);
+    const texts = bp.folder('texts');
+    Object.entries(langFiles).forEach(function(e){ texts.file(e[0]+'.lang', e[1]); });
 
-  const localeList = S.langs.map(l => {
-    const lc = getLocale(l, 'bedrock') || '❌ onbekend';
-    return `  ${l} → ${lc}.lang`;
-  }).join('\n');
-
-  alert(
-    `✅ ${2 + S.langs.length} bestanden gedownload!\n\n` +
-    `Taalbestanden:\n${localeList}\n\n` +
-    `Mapstructuur voor je .mcaddon:\n` +
-    `behavior_pack/\n` +
-    `  ├── manifest.json\n` +
-    `  ├── dialogue/\n` +
-    `  │   └── ${projName}_scenes.json\n` +
-    `  └── texts/\n` +
-    `      └── (de .lang bestanden)\n\n` +
-    `Minecraft pakt automatisch de taal van de speler op.`
-  );
+    zip.generateAsync({type:'blob'}).then(function(blob) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = projName+'.mcaddon';
+      a.click();
+      showToast('✓ '+projName+'.mcaddon gedownload!', 'accent', 3000);
+    });
+  };
+  script.onerror = function() {
+    // Fallback: losse bestanden
+    downloadFile(projName+'_scenes.json', scenesJSON, 'application/json');
+    Object.entries(langFiles).forEach(function(e){ downloadFile(e[0]+'.lang', e[1], 'text/plain'); });
+    downloadFile('manifest.json', JSON.stringify(manifest, null, 2), 'application/json');
+    showToast('⚠ Zip niet beschikbaar — losse bestanden gedownload', 'amber', 4000);
+  };
+  // Laad JSZip alleen als het nog niet beschikbaar is
+  if (typeof JSZip !== 'undefined') {
+    script.onload();
+  } else {
+    document.head.appendChild(script);
+  }
 }
 
 function exportJava() {
@@ -2905,13 +2900,7 @@ function _exportJavaActual() {
   }).join('\n');
 
   downloadFile(`${projName}_conversation.yml`, yaml, 'text/yaml');
-  alert(
-    `✅ YAML bestand gedownload!\n\n` +
-    `Taalsleutels in het bestand:\n${localeList}\n\n` +
-    `Kopieer naar:\nplugins/BetonQuest/conversations/\n\n` +
-    `Dan: /bq reload in Minecraft\n\n` +
-    `BetonQuest kiest automatisch de taal van de speler.`
-  );
+  showToast('✓ '+projName+'_conversation.yml gedownload — kopieer naar plugins/BetonQuest/conversations/', 'accent', 4000);
 }
 
 function downloadFile(name, content, type) {
@@ -2927,7 +2916,7 @@ let previewState = null;
 
 function showPreview() {
   const startNode = S.nodes.find(n=>!S.conns.some(c=>c.to===n.id));
-  if (!startNode) { alert(t('prev_no_start')); return; }
+  if (!startNode) { showToast(t('prev_no_start'), 'amber', 3000); return; }
   previewState = { nodeId: startNode.id, lang: S.langs[0] };
   document.getElementById('preview-modal').style.display='flex';
   document.querySelector('#preview-modal .modal h2').textContent = t('prev_title');
@@ -3107,7 +3096,7 @@ function updateHint() {
 
 // ─── INSTELLINGEN ─────────────────────────────────────────────────────────────
 const SETTINGS_DEFAULTS = {
-  theme: 'dark', canvasBg: 'dots', transProvider: 'libretranslate',
+  theme: 'dark', canvasBg: 'dots', transProvider: 'mymemory',
   apiKey: '', libreUrl: 'https://libretranslate.com',
   exportDefault: 'bedrock', autosave: 0, uiLang: 'NL',
 };
@@ -3196,14 +3185,31 @@ async function translateText(texts, targetLang, sourceLang) {
   const provider = SETTINGS.transProvider;
   const lcEntry  = MC_LOCALES[targetLang];
   const langName = lcEntry ? lcEntry.name : targetLang;
+  const srcCode  = sourceLang.toLowerCase().slice(0,2);
+  const tgtCode  = targetLang.toLowerCase().slice(0,2);
 
-  if (provider === 'libretranslate') {
+  if (provider === 'mymemory') {
+    // MyMemory — gratis, geen key nodig, CORS ok
+    const results = {};
+    for (const [k, text] of Object.entries(texts)) {
+      if (!text) { results[k]=''; continue; }
+      const url = 'https://api.mymemory.translated.net/get?q='
+        + encodeURIComponent(text)
+        + '&langpair=' + srcCode + '|' + tgtCode;
+      const r = await fetch(url);
+      const d = await r.json();
+      results[k] = (d.responseStatus===200 && d.responseData?.translatedText)
+        ? d.responseData.translatedText : text;
+    }
+    return results;
+
+  } else if (provider === 'libretranslate') {
     const results = {};
     for (const [k, text] of Object.entries(texts)) {
       if (!text) { results[k]=''; continue; }
       const r = await fetch(`${SETTINGS.libreUrl||'https://libretranslate.com'}/translate`, {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ q:text, source:sourceLang.toLowerCase().slice(0,2), target:targetLang.toLowerCase().slice(0,2), format:'text' })
+        body: JSON.stringify({ q:text, source:srcCode, target:tgtCode, format:'text' })
       });
       const d = await r.json();
       results[k] = d.translatedText || text;
@@ -3217,7 +3223,7 @@ async function translateText(texts, targetLang, sourceLang) {
       if (!text) { results[k]=''; continue; }
       const r = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${SETTINGS.apiKey}`, {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ q:text, target:targetLang.toLowerCase().slice(0,2), format:'text' })
+        body: JSON.stringify({ q:text, target:tgtCode, format:'text' })
       });
       const d = await r.json();
       results[k] = d.data?.translations?.[0]?.translatedText || text;
@@ -3225,7 +3231,7 @@ async function translateText(texts, targetLang, sourceLang) {
     return results;
 
   } else {
-    // Anthropic
+    // Anthropic Claude
     if (!SETTINGS.apiKey) throw new Error('Geen Anthropic API key — stel hem in via ⚙ Instellingen');
     const prompt = `Translate Minecraft NPC dialog from ${sourceLang} to ${langName} (${targetLang}). Return ONLY JSON with same keys.\n${JSON.stringify(texts,null,2)}`;
     const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -3526,7 +3532,7 @@ function loadFromFile(event) {
     try {
       let data;
       if (file.name.endsWith('.yaml') || file.name.endsWith('.yml')) {
-        alert('YAML laden wordt momenteel niet ondersteund — sla op als .npcproj of .json voor het beste resultaat.');
+        showToast('⚠ YAML laden niet ondersteund — gebruik .npcproj of .json', 'amber', 4000);
         return;
       } else {
         data = JSON.parse(e.target.result);
@@ -3534,7 +3540,7 @@ function loadFromFile(event) {
 
       // Validate
       if (!data.nodes || !data.conns) {
-        alert('Ongeldig bestand — dit lijkt geen QuestCraft project te zijn.');
+        showToast('⚠ Ongeldig bestand — geen QuestCraft project', 'amber', 3000);
         return;
       }
 
@@ -3566,7 +3572,7 @@ function loadFromFile(event) {
       setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 3000);
 
     } catch(err) {
-      alert(`Fout bij laden: ${err.message}`);
+      showToast('⚠ Fout bij laden: ' + err.message, 'amber', 4000);
     }
   };
   reader.readAsText(file);
